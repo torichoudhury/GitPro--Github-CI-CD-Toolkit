@@ -1,6 +1,8 @@
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
 
+const ENV_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || "";
+
 export interface GitHubUserData {
   login: string;
   id: number;
@@ -126,7 +128,16 @@ export const fetchGitHubUserData = async (
     const apiUrl = `https://api.github.com/users/${encodedUsername}`;
     console.log("GitHub API URL:", apiUrl);
 
-    const response = await fetch(apiUrl);
+    const headers: HeadersInit = {
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "GitPro-App",
+    };
+
+    if (ENV_TOKEN) {
+      headers["Authorization"] = `token ${ENV_TOKEN}`;
+    }
+
+    const response = await fetch(apiUrl, { headers });
     if (!response.ok) {
       throw new Error(`GitHub API error: ${response.status}`);
     }
@@ -203,8 +214,9 @@ export const fetchGitHubRepositories = async (
     };
 
     // Add authorization header if access token is provided
-    if (accessToken) {
-      headers["Authorization"] = `Bearer ${accessToken}`;
+    const token = accessToken || ENV_TOKEN;
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
     }
 
     // Use the username directly since we're getting it from screenName
@@ -240,7 +252,7 @@ export const fetchGitHubRepositories = async (
     // Filter repositories based on access level
     const filteredRepos = repositories.filter((repo) => {
       // Show public repos always, private repos only if authenticated
-      return !repo.private || accessToken;
+      return !repo.private || accessToken || ENV_TOKEN;
     });
 
     return filteredRepos;

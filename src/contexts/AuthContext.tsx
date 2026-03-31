@@ -378,6 +378,96 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Listen to auth state changes
   useEffect(() => {
+    const githubToken = import.meta.env.VITE_GITHUB_TOKEN;
+
+    if (githubToken && githubToken !== "your_github_token_here") {
+      console.log("Found GitHub token in environment, bypassing manual login");
+      
+      const initializeAutoLogin = async () => {
+        setLoading(true);
+        try {
+          // Mock user object to satisfy Firebase User interface requirements
+          const mockUser = {
+            uid: "auto-login-user",
+            email: "user@github.com",
+            displayName: "GitHub User",
+            photoURL: "https://github.com/identicons/user.png",
+          } as User;
+
+          setUser(mockUser);
+
+          // Attempt to fetch real GitHub data to populate profile
+          try {
+            // We can fetch user data using the token by calling the GitHub API
+            const response = await fetch("https://api.github.com/user", {
+              headers: {
+                Authorization: `token ${githubToken}`,
+                Accept: "application/vnd.github.v3+json",
+              }
+            });
+
+            if (response.ok) {
+              const githubData = await response.json();
+              const profile: UserProfile = {
+                uid: "auto-login-user",
+                email: githubData.email || "user@github.com",
+                displayName: githubData.name || githubData.login,
+                photoURL: githubData.avatar_url,
+                githubUsername: githubData.login,
+                githubId: githubData.id.toString(),
+                bio: githubData.bio || "",
+                location: githubData.location || "",
+                website: githubData.blog || "",
+                company: githubData.company || "",
+                publicRepos: githubData.public_repos,
+                followers: githubData.followers,
+                following: githubData.following,
+                createdAt: new Date(githubData.created_at),
+                lastLoginAt: new Date(),
+                preferences: {
+                  theme: "dark",
+                  notifications: true,
+                  language: "en",
+                }
+              };
+              setUserProfile(profile);
+              
+              // Also update the mock user with better info
+              setUser({
+                ...mockUser,
+                displayName: profile.displayName,
+                photoURL: profile.photoURL,
+              } as User);
+            } else {
+              // Fallback if GitHub API fails
+              setUserProfile({
+                uid: "auto-login-user",
+                githubUsername: "github-user",
+                createdAt: new Date(),
+                lastLoginAt: new Date(),
+              } as UserProfile);
+            }
+          } catch (err) {
+            console.warn("Failed to fetch enhanced GitHub profile for auto-login:", err);
+            setUserProfile({
+              uid: "auto-login-user",
+              githubUsername: "github-user",
+              createdAt: new Date(),
+              lastLoginAt: new Date(),
+            } as UserProfile);
+          }
+        } catch (err) {
+          console.error("Auto-login initialization failed:", err);
+          setError("Failed to initialize auto-login session");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      initializeAutoLogin();
+      return; // Skip Firebase auth listener
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setLoading(true);
 

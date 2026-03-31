@@ -7,6 +7,7 @@ import {
   Stethoscope,
   FileText,
   Settings,
+  ExternalLink,
 } from "lucide-react";
 import { WorkflowVisualization } from "./WorkflowVisualization";
 import { PipelineMonitor } from "./PipelineMonitor";
@@ -67,6 +68,14 @@ const NAV_ITEMS = [
 export const Dashboard: React.FC = () => {
   const [activePanel, setActivePanel] = useState<PanelType>("pipeline");
   const { rateLimit, nudges, activeRepo, config } = useCIPipeline();
+
+  const isPopup = typeof window !== "undefined" && window.innerWidth < 600;
+
+  const handleExpand = () => {
+    if (typeof window !== "undefined") {
+      window.open(window.location.href, "_blank");
+    }
+  };
 
   const lowQuota = rateLimit && rateLimit.remaining < 100;
 
@@ -135,6 +144,18 @@ export const Dashboard: React.FC = () => {
               No token — add in Settings
             </span>
           )}
+          {isPopup && (
+            <motion.button
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={handleExpand}
+              className="p-1.5 rounded-md flex items-center justify-center transition-colors"
+              style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}
+              title="Open in new tab"
+            >
+              <ExternalLink size={14} />
+            </motion.button>
+          )}
         </div>
       </div>
 
@@ -145,7 +166,7 @@ export const Dashboard: React.FC = () => {
           animate={{ opacity: 1, x: 0 }}
           className="flex flex-col gap-1 p-3 flex-shrink-0"
           style={{
-            width: 180,
+            width: isPopup ? 64 : 180,
             background: "#161b22",
             borderRight: "1px solid #21262d",
           }}
@@ -158,7 +179,7 @@ export const Dashboard: React.FC = () => {
                 whileHover={{ x: 2 }}
                 whileTap={{ scale: 0.97 }}
                 onClick={() => setActivePanel(item.id)}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-left text-sm transition-colors"
+                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-left text-sm transition-colors overflow-hidden whitespace-nowrap"
                 style={{
                   background: active ? `${item.color}18` : "transparent",
                   color: active ? item.color : "#8b949e",
@@ -166,10 +187,12 @@ export const Dashboard: React.FC = () => {
                     ? `1px solid ${item.color}30`
                     : "1px solid transparent",
                   fontWeight: active ? 500 : 400,
+                  justifyContent: isPopup ? "center" : "flex-start",
                 }}
+                title={isPopup ? item.label : ""}
               >
-                <item.icon size={15} />
-                {item.label}
+                <item.icon size={15} className="flex-shrink-0" />
+                {!isPopup && <span>{item.label}</span>}
               </motion.button>
             );
           })}
