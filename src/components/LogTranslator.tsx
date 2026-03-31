@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Loader2, 
@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 import { useCIPipeline } from "../contexts/CIPipelineContext";
 import { analyzeLog } from "../services/logAnalysisService";
-import { getJobLogs, getWorkflowJobs } from "../services/githubAPIService";
+import {
+  getJobLogs,
+  getWorkflowJobs,
+  getWorkflowRunLogs,
+} from "../services/githubAPIService";
 import type { WorkflowRun, WorkflowJob, LogAnalysisResult } from "../types";
 
 const CATEGORY_LABELS: Record<string, { label: string; color: string; icon: any }> = {
@@ -25,7 +29,7 @@ const CATEGORY_LABELS: Record<string, { label: string; color: string; icon: any 
 };
 
 export const LogTranslator: React.FC = () => {
-  const { pipelineRuns, activeRepo } = useCIPipeline();
+  const { pipelineRuns, activeRepo, repoInsights, isLoadingRepoInsights } = useCIPipeline();
 
   const [selectedRun, setSelectedRun] = useState<WorkflowRun | null>(null);
   const [jobs, setJobs] = useState<WorkflowJob[]>([]);
@@ -41,12 +45,19 @@ export const LogTranslator: React.FC = () => {
     setSelectedJob(null);
     setAnalysis(null);
     setJobs([]);
+    setError(null);
     if (!run || !activeRepo) return;
 
     setFetchingJobs(true);
     try {
       const j = await getWorkflowJobs(activeRepo.fullName, run.id);
       setJobs(j);
+      const preferredJob =
+        j.find((job) => job.conclusion === "failure") ??
+        j.find((job) => job.status === "in_progress") ??
+        j[0] ??
+        null;
+      setSelectedJob(preferredJob);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -54,14 +65,70 @@ export const LogTranslator: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (!activeRepo) return;
+
+    if (pipelineRuns.length === 0) {
+      setSelectedRun(null);
+      setSelectedJob(null);
+      setJobs([]);
+      return;
+    }
+
+    const stillExists = selectedRun
+      ? pipelineRuns.some((run) => run.id === selectedRun.id)
+      : false;
+
+    if (stillExists) {
+      return;
+    }
+
+    const preferredRun =
+      pipelineRuns.find((run) => run.conclusion === "failure") ??
+      pipelineRuns[0];
+
+    void handleRunChange(preferredRun.id.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepo?.fullName, pipelineRuns]);
+
   const handleFetchLog = async () => {
-    if (!selectedJob || !activeRepo) return;
+    if (!selectedJob || !activeRepo || !selectedRun) return;
     setFetchingLog(true);
     setAnalysis(null);
     setError(null);
     try {
-      const raw = await getJobLogs(activeRepo.fullName, selectedJob.id);
-      const result = analyzeLog(raw);
+      let raw = "";
+
+      try {
+        raw = await getJobLogs(activeRepo.fullName, selectedJob.id);
+      } catch {
+        // fallback to run-level logs if job endpoint is unavailable in current runtime
+      }
+
+      if (!raw || raw.trim().length < 20) {
+        const runLogs = await getWorkflowRunLogs(activeRepo.fullName, selectedRun.id);
+        const jobName = selectedJob.name.toLowerCase();
+        const runLines = runLogs.split("\n");
+
+        const indexedLines = runLines
+          .map((line, index) => ({ line, index }))
+          .filter(({ line }) => line.toLowerCase().includes(jobName));
+
+        if (indexedLines.length > 0) {
+          const pivot = indexedLines[0].index;
+          const start = Math.max(0, pivot - 40);
+          const end = Math.min(runLines.length, pivot + 220);
+          raw = runLines.slice(start, end).join("\n");
+        } else {
+          raw = runLogs;
+        }
+      }
+
+      if (!raw || !raw.trim()) {
+        throw new Error("Log content is empty for this job/run.");
+      }
+
+      const result = await analyzeLog(raw);
       setAnalysis(result);
     } catch (e: any) {
       setError(e.message ?? "Failed to fetch logs");
@@ -93,6 +160,7 @@ export const LogTranslator: React.FC = () => {
               className="w-full bg-black/40 border-white/10 rounded-xl px-4 py-3 text-sm font-semibold text-white focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
               onChange={(e) => handleRunChange(e.target.value)}
               value={selectedRun?.id.toString() ?? ""}
+              disabled={pipelineRuns.length === 0}
             >
               <option value="" disabled>Choose an execution...</option>
               {pipelineRuns.map((r) => (
@@ -113,7 +181,7 @@ export const LogTranslator: React.FC = () => {
               disabled={fetchingJobs || jobs.length === 0}
               value={selectedJob?.id.toString() ?? ""}
             >
-              <option value="" disabled>{fetchingJobs ? 'Fetching jobs...' : 'Choose a job tasks...'}</option>
+              <option value="" disabled>{fetchingJobs ? 'Fetching jobs...' : 'Choose a job task...'}</option>
               {jobs.map((j) => (
                 <option key={j.id} value={j.id.toString()}>
                   {j.name} ({j.conclusion ?? j.status})
@@ -213,11 +281,6 @@ export const LogTranslator: React.FC = () => {
                     <Terminal size={14} className="text-tertiary" />
                     <h4 className="text-[10px] font-black text-tertiary uppercase tracking-widest">Extended Log Context</h4>
                   </div>
-                  <div className="flex items-center gap-3">
-                     <span className="text-[10px] font-bold text-secondary uppercase">ANSI Colors ENABLED</span>
-                     <div className="w-px h-3 bg-white/10" />
-                     <div className="w-2 h-2 rounded-full bg-green-500" />
-                  </div>
                </div>
 
                <div className="log-container border-white/5 shadow-2xl relative">
@@ -254,7 +317,39 @@ export const LogTranslator: React.FC = () => {
               <Terminal size={32} className="text-white/10" />
             </div>
             <h3 className="text-sm font-black text-tertiary uppercase tracking-[0.2em]">Ready for analysis</h3>
-            <p className="text-xs text-tertiary/60 mt-2 text-center max-w-xs font-medium">Select a failing workflow execution above to begin the AI-powered diagnostic process.</p>
+            {pipelineRuns.length > 0 ? (
+              <p className="text-xs text-tertiary/60 mt-2 text-center max-w-xs font-medium">Select a failing workflow execution above to begin the AI-powered diagnostic process.</p>
+            ) : (
+              <div className="mt-2 text-center max-w-lg">
+                <p className="text-xs text-tertiary/60 font-medium">
+                  {isLoadingRepoInsights
+                    ? "Loading repository activity..."
+                    : "No workflow runs found yet for this repository. Push a workflow-enabled commit or trigger one manually to unlock log analysis."}
+                </p>
+                {repoInsights && (
+                  <div className="mt-4 flex items-center justify-center gap-3 flex-wrap">
+                    <a
+                      href={`https://github.com/${repoInsights.fullName}/actions`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] font-bold text-blue-400 uppercase tracking-widest inline-flex items-center gap-1"
+                    >
+                      Open Actions <ExternalLink size={11} />
+                    </a>
+                    {repoInsights.commits[0] && (
+                      <a
+                        href={repoInsights.commits[0].htmlUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] font-bold text-tertiary uppercase tracking-widest inline-flex items-center gap-1 hover:text-white"
+                      >
+                        Latest Commit <ExternalLink size={11} />
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
         </div>
       )}
     </div>

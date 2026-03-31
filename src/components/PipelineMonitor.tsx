@@ -5,6 +5,7 @@ import {
   Loader2, 
   ExternalLink, 
   GitBranch, 
+  GitCommit,
   Clock, 
   Hash, 
   Zap, 
@@ -32,6 +33,14 @@ function relativeTime(iso: string) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function resetCountdown(resetAt: number) {
+  const seconds = Math.max(0, resetAt - Math.floor(Date.now() / 1000));
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export const PipelineMonitor: React.FC = () => {
   const {
     currentRun,
@@ -42,6 +51,8 @@ export const PipelineMonitor: React.FC = () => {
     activeRepo,
     refreshRuns,
     rateLimit,
+    repoInsights,
+    isLoadingRepoInsights,
   } = useCIPipeline();
 
   if (!activeRepo) {
@@ -102,6 +113,10 @@ export const PipelineMonitor: React.FC = () => {
   const statusLabel = currentRun?.status === "in_progress"
     ? "in progress"
     : currentRun?.conclusion ?? "—";
+  const apiUsagePct = rateLimit
+    ? Math.round((rateLimit.remaining / Math.max(rateLimit.limit, 1)) * 100)
+    : null;
+  const jobBadges = currentJobs.slice(0, 3);
 
   return (
     <div className="h-full flex flex-col gap-8 fade-in">
@@ -135,6 +150,48 @@ export const PipelineMonitor: React.FC = () => {
         <div className="p-4 rounded-2xl bg-red-400/10 border border-red-400/20 text-red-100 flex items-center gap-3 shadow-lg shadow-red-500/5">
           <AlertCircle size={18} className="text-red-400" />
           <span className="text-sm font-medium">{runsError}</span>
+        </div>
+      )}
+
+      {!currentRun && !isLoadingRuns && !runsError && (
+        <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 text-secondary space-y-3">
+          <div className="flex items-center gap-3">
+            <AlertCircle size={18} className="text-tertiary" />
+            <span className="text-sm font-medium">No workflow runs found yet. Showing live repository activity instead.</span>
+          </div>
+
+          {isLoadingRepoInsights && (
+            <div className="flex items-center gap-2 text-xs text-tertiary font-mono">
+              <Loader2 size={12} className="spin" /> Loading repo insights...
+            </div>
+          )}
+
+          {repoInsights && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <p className="text-[10px] uppercase font-black tracking-widest text-tertiary mb-1">Repository</p>
+                <p className="text-sm font-bold text-white truncate">{repoInsights.fullName}</p>
+                <p className="text-[10px] text-tertiary mt-1 uppercase">{repoInsights.visibility} • {repoInsights.branchCount} branches</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <p className="text-[10px] uppercase font-black tracking-widest text-tertiary mb-1">Workflows</p>
+                <p className="text-sm font-bold text-white">{repoInsights.workflows.length} configured</p>
+                <a
+                  href={`https://github.com/${repoInsights.fullName}/actions`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-blue-400 uppercase font-bold tracking-widest mt-1 inline-flex items-center gap-1"
+                >
+                  open actions <ExternalLink size={10} />
+                </a>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <p className="text-[10px] uppercase font-black tracking-widest text-tertiary mb-1">Last Push</p>
+                <p className="text-sm font-bold text-white">{relativeTime(repoInsights.pushedAt)}</p>
+                <p className="text-[10px] text-tertiary mt-1 uppercase">default: {repoInsights.defaultBranch}</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -203,9 +260,19 @@ export const PipelineMonitor: React.FC = () => {
             <div className="flex items-center justify-between p-4 rounded-xl bg-black/20 border border-white/5">
               <div className="flex items-center gap-4">
                 <div className="flex -space-x-2">
-                  {[1, 2, 3].map(i => (
-                    <div key={i} className="w-6 h-6 rounded-full border-2 border-primary bg-gray-700 shadow-sm shadow-black" />
-                  ))}
+                  {jobBadges.length > 0 ? (
+                    jobBadges.map((job) => (
+                      <div
+                        key={job.id}
+                        className="w-6 h-6 rounded-full border-2 border-primary bg-gray-700 shadow-sm shadow-black flex items-center justify-center text-[9px] font-black text-white"
+                        title={job.name}
+                      >
+                        {(job.name.trim()[0] || "#").toUpperCase()}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="w-6 h-6 rounded-full border-2 border-primary bg-gray-700 shadow-sm shadow-black" />
+                  )}
                 </div>
                 <span className="text-xs font-semibold text-secondary">
                   {currentJobs.filter((j) => j.status === "completed").length} / {currentJobs.length} Jobs Finalized
@@ -279,6 +346,37 @@ export const PipelineMonitor: React.FC = () => {
               </div>
             </div>
           )}
+
+          {currentJobs.length === 0 && repoInsights?.commits && repoInsights.commits.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-2">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-tertiary">Latest Commit Activity</h3>
+                <GitCommit size={12} className="text-blue-400" />
+              </div>
+              <div className="grid gap-3">
+                {repoInsights.commits.slice(0, 6).map((commit) => (
+                  <a
+                    key={commit.sha}
+                    href={commit.htmlUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group flex items-center justify-between p-5 rounded-2xl border border-white/5 bg-white/[0.01] hover:bg-white/[0.03] transition-all"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-white truncate group-hover:text-blue-400 transition-colors">{commit.message}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-[10px] font-bold font-mono text-blue-400 uppercase">{commit.sha.slice(0, 7)}</span>
+                        <span className="text-[10px] font-bold text-secondary uppercase">{commit.author}</span>
+                      </div>
+                    </div>
+                    <div className="text-[10px] font-bold text-tertiary uppercase font-mono whitespace-nowrap">
+                      {relativeTime(commit.committedAt)}
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Sidebar Info/Stats */}
@@ -302,10 +400,10 @@ export const PipelineMonitor: React.FC = () => {
                 <div className="pt-4 border-t border-white/5">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-xs text-secondary font-medium">API Threshold</span>
-                    <span className="text-xs font-bold text-white">{Math.round((rateLimit.remaining / rateLimit.limit) * 100)}%</span>
+                    <span className="text-xs font-bold text-white">{apiUsagePct}%</span>
                   </div>
                   <p className="text-[10px] text-tertiary leading-relaxed font-medium">
-                    System stability is prioritized. API calls are optimized to stay within safe range and reduce latency.
+                    {rateLimit.remaining} of {rateLimit.limit} requests left. Reset in {resetCountdown(rateLimit.resetAt)}.
                   </p>
                 </div>
               )}

@@ -1,32 +1,19 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   ReactNode,
 } from "react";
 import {
-  User,
-  signInWithPopup,
-  signOut,
-  onAuthStateChanged,
-  UserCredential,
-} from "firebase/auth";
-import {
-  doc,
-  setDoc,
-  getDoc,
-  updateDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { auth, githubProvider, db } from "../config/firebase";
-import {
-  fetchGitHubUserData,
-  getGitHubUsernameFromId,
   fetchGitHubRepositories,
+  fetchGitHubUserData,
+  type GitHubUserData,
+  type GitHubRepository,
 } from "../services/githubService";
 
-// User profile interface
 export interface UserProfile {
   uid: string;
   email: string | null;
@@ -41,9 +28,9 @@ export interface UserProfile {
   publicRepos?: number;
   followers?: number;
   following?: number;
-  createdAt: any;
-  lastLoginAt: any;
-  repositories?: any[];
+  createdAt: Date;
+  lastLoginAt: Date;
+  repositories?: GitHubRepository[];
   preferences?: {
     theme?: "light" | "dark";
     notifications?: boolean;
@@ -51,22 +38,15 @@ export interface UserProfile {
   };
 }
 
-// Auth context interface
 interface AuthContextType {
-  user: User | null;
   userProfile: UserProfile | null;
   loading: boolean;
   error: string | null;
-  signInWithGitHub: () => Promise<UserCredential | null>;
-  logout: () => Promise<void>;
-  updateUserProfile: (updates: Partial<UserProfile>) => Promise<void>;
-  refreshGitHubRepos: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
-// Create auth context
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Custom hook to use auth context
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
@@ -75,441 +55,117 @@ export const useAuth = () => {
   return context;
 };
 
-const isChromeExtensionContext = (): boolean => {
-  return (
-    typeof window !== "undefined" &&
-    window.location.protocol === "chrome-extension:"
-  );
-};
-
-const mapFirebaseAuthError = (err: any): string => {
-  const errorCode = err?.code as string | undefined;
-
-  if (
-    isChromeExtensionContext() &&
-    (errorCode === "auth/internal-error" ||
-      errorCode === "auth/operation-not-supported-in-this-environment")
-  ) {
-    return "GitHub popup sign-in is not supported directly in a Manifest V3 extension popup. Use the app in a normal browser tab, or implement Firebase offscreen-document auth flow for extension sign-in.";
-  }
-
-  if (errorCode === "auth/operation-not-allowed") {
-    return "GitHub sign-in is not enabled in Firebase. Enable GitHub under Authentication > Sign-in method.";
-  }
-
-  if (errorCode === "auth/unauthorized-domain") {
-    return "This domain is not authorized in Firebase Authentication settings. Add the current domain to Authorized domains.";
-  }
-
-  if (errorCode === "auth/invalid-api-key") {
-    return "Firebase API key is invalid. Re-check VITE_FIREBASE_API_KEY in your .env file.";
-  }
-
-  if (errorCode === "auth/popup-blocked") {
-    return "The sign-in popup was blocked by the browser. Allow popups and try again.";
-  }
-
-  if (errorCode === "auth/popup-closed-by-user") {
-    return "Sign-in popup was closed before authentication completed.";
-  }
-
-  if (errorCode === "auth/cancelled-popup-request") {
-    return "Another sign-in popup request was started. Please try again.";
-  }
-
-  if (errorCode === "auth/internal-error") {
-    return "Firebase returned an internal auth error. Check GitHub provider setup in Firebase (Client ID/Secret and callback URL) and try again.";
-  }
-
-  return err?.message || "Sign-in failed. Please try again.";
-};
-
-// Auth provider component
 interface AuthProviderProps {
   children: ReactNode;
 }
 
+function mapGitHubDataToProfile(
+  githubData: GitHubUserData,
+  repositories: GitHubRepository[]
+): UserProfile {
+  return {
+    uid: githubData.id.toString(),
+    email: githubData.email ?? null,
+    displayName: githubData.name || githubData.login,
+    photoURL: githubData.avatar_url,
+    githubUsername: githubData.login,
+    githubId: githubData.id.toString(),
+    bio: githubData.bio || "",
+    location: githubData.location || "",
+    website: githubData.blog || "",
+    company: githubData.company || "",
+    publicRepos: githubData.public_repos,
+    followers: githubData.followers,
+    following: githubData.following,
+    createdAt: new Date(githubData.created_at),
+    lastLoginAt: new Date(),
+    repositories,
+    preferences: {
+      theme: "dark",
+      notifications: true,
+      language: "en",
+    },
+  };
+}
+
+async function fetchGitHubViewerWithToken(
+  token: string
+): Promise<GitHubUserData | null> {
+  const response = await fetch("https://api.github.com/user", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = (await response.json()) as GitHubUserData;
+  return data;
+}
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Create or update user profile in Firestore
-  const createOrUpdateUserProfile = async (
-    user: User,
-    additionalData?: any
-  ) => {
-    if (!user) return;
+  const refreshProfile = useCallback(async () => {
+    const envToken = import.meta.env.VITE_GITHUB_TOKEN?.trim() || "";
+    const envUsername = import.meta.env.VITE_GITHUB_USERNAME?.trim() || "";
 
-    const userRef = doc(db, "users", user.uid);
-    const userSnapshot = await getDoc(userRef);
-
-    // Fetch GitHub repositories if githubUsername is available
-    let repositories: any[] | undefined = undefined;
-    if (additionalData && additionalData.githubUsername) {
-      try {
-        repositories = await fetchGitHubRepositories(
-          additionalData.githubUsername
-        );
-      } catch (err) {
-        console.warn("Could not fetch GitHub repositories:", err);
-      }
-    }
-
-    const userData: Partial<UserProfile> = {
-      uid: user.uid,
-      email: user.email,
-      displayName: user.displayName,
-      photoURL: user.photoURL,
-      lastLoginAt: serverTimestamp(),
-      ...additionalData,
-      ...(repositories ? { repositories } : {}),
-    };
-
-    try {
-      if (!userSnapshot.exists()) {
-        // Create new user profile
-        const newUserData: UserProfile = {
-          ...userData,
-          createdAt: serverTimestamp(),
-          preferences: {
-            theme: "dark",
-            notifications: true,
-            language: "en",
-          },
-        } as UserProfile;
-
-        await setDoc(userRef, newUserData);
-        setUserProfile(newUserData);
-      } else {
-        // Update existing user profile
-        await updateDoc(userRef, userData);
-        const updatedProfile = {
-          ...userSnapshot.data(),
-          ...userData,
-        } as UserProfile;
-        setUserProfile(updatedProfile);
-      }
-    } catch (err) {
-      console.error("Error creating/updating user profile:", err);
-      setError("Failed to create user profile");
-    }
-  };
-  // Manually refresh GitHub repositories and update Firestore
-  const refreshGitHubRepos = async () => {
-    if (!userProfile || !userProfile.githubUsername || !user) return;
     setLoading(true);
-    try {
-      const repos = await fetchGitHubRepositories(userProfile.githubUsername);
-      const userRef = doc(db, "users", user.uid);
-      await updateDoc(userRef, { repositories: repos });
-      setUserProfile({ ...userProfile, repositories: repos });
-    } catch (err) {
-      console.error("Failed to refresh GitHub repositories:", err);
-      setError("Failed to refresh GitHub repositories");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Sign in with GitHub
-  const signInWithGitHub = async (): Promise<UserCredential | null> => {
-    try {
-      setError(null);
-      setLoading(true);
-
-      if (isChromeExtensionContext()) {
-        throw {
-          code: "auth/operation-not-supported-in-this-environment",
-          message:
-            "GitHub popup sign-in requires an offscreen authentication flow in Chrome extensions.",
-        };
-      }
-
-      const result = await signInWithPopup(auth, githubProvider);
-
-      // Extract GitHub username from the provider data
-      let githubUsername = "";
-
-      // Get the GitHub username from reloadUserInfo.screenName
-      // Note: reloadUserInfo is not in the official User type but exists in the actual object
-      const userWithInfo = result.user as any;
-      if (
-        userWithInfo.reloadUserInfo &&
-        userWithInfo.reloadUserInfo.screenName
-      ) {
-        githubUsername = userWithInfo.reloadUserInfo.screenName;
-        console.log("GitHub username from screenName:", githubUsername);
-      }
-
-      // Fallback: Try to extract from provider data
-      if (!githubUsername && result.user.providerData[0]) {
-        const githubData = result.user.providerData[0];
-        console.log("GitHub data uid:", githubData.uid);
-
-        if (githubData.providerId === "github.com" && githubData.uid) {
-          githubUsername = githubData.uid;
-        }
-      }
-
-      // Fallback: Try to extract from email
-      if (!githubUsername && result.user.email) {
-        githubUsername = result.user.email.split("@")[0];
-      }
-
-      console.log("Final extracted GitHub username:", githubUsername);
-
-      // Initialize additional data
-      let additionalData: any = {
-        githubId: result.user.uid,
-      };
-
-      // Try to fetch enhanced GitHub data from GitHub API using the extracted username
-      try {
-        if (githubUsername) {
-          // If the username is numeric (user ID), try to convert it to username
-          if (/^\d+$/.test(githubUsername)) {
-            console.log(
-              "Username appears to be numeric ID, attempting to convert:",
-              githubUsername
-            );
-            const actualUsername = await getGitHubUsernameFromId(
-              githubUsername
-            );
-            if (actualUsername) {
-              githubUsername = actualUsername;
-              console.log("Converted ID to username:", githubUsername);
-            } else {
-              console.warn(
-                "Could not convert numeric ID to username:",
-                githubUsername
-              );
-              githubUsername = ""; // Clear invalid username
-            }
-          }
-
-          if (githubUsername) {
-            console.log(
-              "Attempting to fetch GitHub data for username:",
-              githubUsername
-            );
-            const enhancedData = await fetchGitHubUserData(githubUsername);
-            if (enhancedData) {
-              console.log("Successfully fetched GitHub data:", enhancedData);
-              additionalData = {
-                ...additionalData,
-                githubUsername: enhancedData.login, // Use the verified login from GitHub API
-                githubId: enhancedData.id.toString(),
-                bio: enhancedData.bio || "",
-                location: enhancedData.location || "",
-                website: enhancedData.blog || "",
-                company: enhancedData.company || "",
-                publicRepos: enhancedData.public_repos,
-                followers: enhancedData.followers,
-                following: enhancedData.following,
-              };
-            } else {
-              console.warn(
-                "Failed to fetch GitHub data for username:",
-                githubUsername
-              );
-            }
-          }
-        }
-      } catch (githubError) {
-        console.warn("Could not fetch enhanced GitHub data:", githubError);
-        // Continue with basic data if GitHub API fails
-      }
-
-      await createOrUpdateUserProfile(result.user, additionalData);
-
-      return result;
-    } catch (err: any) {
-      console.error("GitHub sign in error:", {
-        code: err?.code,
-        message: err?.message,
-        customData: err?.customData,
-      });
-      setError(mapFirebaseAuthError(err));
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Sign out
-  const logout = async (): Promise<void> => {
-    try {
-      setError(null);
-      await signOut(auth);
-      setUser(null);
-      setUserProfile(null);
-    } catch (err: any) {
-      console.error("Logout error:", err);
-      setError(err.message);
-    }
-  };
-
-  // Update user profile
-  const updateUserProfile = async (
-    updates: Partial<UserProfile>
-  ): Promise<void> => {
-    if (!user) return;
+    setError(null);
 
     try {
-      setError(null);
-      const userRef = doc(db, "users", user.uid);
-      const updateData = {
-        ...updates,
-        lastLoginAt: serverTimestamp(),
-      };
+      let githubData: GitHubUserData | null = null;
 
-      await updateDoc(userRef, updateData);
-
-      if (userProfile) {
-        setUserProfile({ ...userProfile, ...updates });
+      if (envToken) {
+        githubData = await fetchGitHubViewerWithToken(envToken);
       }
-    } catch (err: any) {
-      console.error("Error updating user profile:", err);
-      setError(err.message);
-    }
-  };
 
-  // Listen to auth state changes
-  useEffect(() => {
-    const githubToken = import.meta.env.VITE_GITHUB_TOKEN;
+      if (!githubData && envUsername) {
+        githubData = await fetchGitHubUserData(envUsername);
+      }
 
-    if (githubToken && githubToken !== "your_github_token_here") {
-      console.log("Found GitHub token in environment, bypassing manual login");
-      
-      const initializeAutoLogin = async () => {
-        setLoading(true);
-        try {
-          // Mock user object to satisfy Firebase User interface requirements
-          const mockUser = {
-            uid: "auto-login-user",
-            email: "user@github.com",
-            displayName: "GitHub User",
-            photoURL: "https://github.com/identicons/user.png",
-          } as User;
-
-          setUser(mockUser);
-
-          // Attempt to fetch real GitHub data to populate profile
-          try {
-            // We can fetch user data using the token by calling the GitHub API
-            const response = await fetch("https://api.github.com/user", {
-              headers: {
-                Authorization: `token ${githubToken}`,
-                Accept: "application/vnd.github.v3+json",
-              }
-            });
-
-            if (response.ok) {
-              const githubData = await response.json();
-              const profile: UserProfile = {
-                uid: "auto-login-user",
-                email: githubData.email || "user@github.com",
-                displayName: githubData.name || githubData.login,
-                photoURL: githubData.avatar_url,
-                githubUsername: githubData.login,
-                githubId: githubData.id.toString(),
-                bio: githubData.bio || "",
-                location: githubData.location || "",
-                website: githubData.blog || "",
-                company: githubData.company || "",
-                publicRepos: githubData.public_repos,
-                followers: githubData.followers,
-                following: githubData.following,
-                createdAt: new Date(githubData.created_at),
-                lastLoginAt: new Date(),
-                preferences: {
-                  theme: "dark",
-                  notifications: true,
-                  language: "en",
-                }
-              };
-              setUserProfile(profile);
-              
-              // Also update the mock user with better info
-              setUser({
-                ...mockUser,
-                displayName: profile.displayName,
-                photoURL: profile.photoURL,
-              } as User);
-            } else {
-              // Fallback if GitHub API fails
-              setUserProfile({
-                uid: "auto-login-user",
-                githubUsername: "github-user",
-                createdAt: new Date(),
-                lastLoginAt: new Date(),
-              } as UserProfile);
-            }
-          } catch (err) {
-            console.warn("Failed to fetch enhanced GitHub profile for auto-login:", err);
-            setUserProfile({
-              uid: "auto-login-user",
-              githubUsername: "github-user",
-              createdAt: new Date(),
-              lastLoginAt: new Date(),
-            } as UserProfile);
-          }
-        } catch (err) {
-          console.error("Auto-login initialization failed:", err);
-          setError("Failed to initialize auto-login session");
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      initializeAutoLogin();
-      return; // Skip Firebase auth listener
-    }
-
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setLoading(true);
-
-      if (user) {
-        setUser(user);
-
-        // Fetch user profile from Firestore
-        try {
-          const userRef = doc(db, "users", user.uid);
-          const userSnapshot = await getDoc(userRef);
-
-          if (userSnapshot.exists()) {
-            setUserProfile(userSnapshot.data() as UserProfile);
-          } else {
-            // Create profile if it doesn't exist
-            await createOrUpdateUserProfile(user);
-          }
-        } catch (err) {
-          console.error("Error fetching user profile:", err);
-          setError("Failed to fetch user profile");
-        }
-      } else {
-        setUser(null);
+      if (!githubData) {
         setUserProfile(null);
+        setError(
+          "Could not load GitHub profile from .env. Set VITE_GITHUB_TOKEN or VITE_GITHUB_USERNAME in backend/.env."
+        );
+        return;
       }
 
-      setLoading(false);
-    });
+      const repositories = await fetchGitHubRepositories(
+        githubData.login,
+        envToken || undefined
+      );
 
-    return unsubscribe;
+      setUserProfile(mapGitHubDataToProfile(githubData, repositories));
+    } catch (err: unknown) {
+      console.error("Failed to initialize GitHub profile:", err);
+      setUserProfile(null);
+      setError("Failed to load GitHub profile from .env settings.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const value: AuthContextType = {
-    user,
-    userProfile,
-    loading,
-    error,
-    signInWithGitHub,
-    logout,
-    updateUserProfile,
-    refreshGitHubRepos,
-  };
+  useEffect(() => {
+    void refreshProfile();
+  }, [refreshProfile]);
+
+  const value = useMemo<AuthContextType>(
+    () => ({
+      userProfile,
+      loading,
+      error,
+      refreshProfile,
+    }),
+    [userProfile, loading, error, refreshProfile]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

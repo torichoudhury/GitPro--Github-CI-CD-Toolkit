@@ -1,9 +1,19 @@
 import type { FailureCategory, LogAnalysisResult } from "../types";
 
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY?.trim() || "";
+const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL?.trim() || "gemini-1.5-flash";
+
 // Strip ANSI escape codes
 function stripAnsi(raw: string): string {
   // eslint-disable-next-line no-control-regex
   return raw.replace(/\x1B\[[0-9;]*[mGKHF]/g, "");
+}
+
+function normalizeLine(line: string): string {
+  return line
+    .replace(/^\d{4}-\d{2}-\d{2}T\S+\s+/, "")
+    .replace(/^##\[(error|warning|group|endgroup)\]\s*/i, "")
+    .trim();
 }
 
 interface ErrorPattern {
@@ -64,16 +74,42 @@ const FIX_SUGGESTIONS: Record<FailureCategory, string> = {
     "Non-deterministic execution failure. Analyze the surrounding log lines for memory exhaustion (OOM), network timeouts, or intermittent infrastructure issues. Cross-reference the error code with the platform documentation.",
 };
 
-export function analyzeLog(rawLog: string): LogAnalysisResult {
-  const clean = stripAnsi(rawLog);
-  const lines = clean.split("\n").map((l) => l.trimEnd());
+function normalizeCategory(value: string | undefined): FailureCategory {
+  switch (value) {
+    case "dependency_error":
+    case "test_failure":
+    case "lint_error":
+    case "env_missing":
+    case "unknown":
+      return value;
+    default:
+      return "unknown";
+  }
+}
 
+function findJsonPayload(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+  return trimmed.slice(start, end + 1);
+}
+
+function heuristicAnalysis(lines: string[]): LogAnalysisResult {
   let rootCauseLineIndex = -1;
   let rootCauseLine = "";
   let category: FailureCategory = "unknown";
 
-  outer: for (let i = 0; i < lines.length; i++) {
+  // CI logs often end with the most actionable failure context.
+  outer: for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
+    if (!line) continue;
     for (const { pattern, category: cat } of PATTERNS) {
       if (pattern.test(line)) {
         rootCauseLineIndex = i;
@@ -109,4 +145,143 @@ export function analyzeLog(rawLog: string): LogAnalysisResult {
     fixSuggestion: FIX_SUGGESTIONS[category],
     lines,
   };
+}
+
+function buildPrompt(lines: string[]) {
+  const MAX_LINES = 1200;
+  const start = Math.max(0, lines.length - MAX_LINES);
+  const sliced = lines.slice(start);
+
+  let content = sliced
+    .map((line, idx) => `${start + idx}: ${line}`)
+    .join("\n");
+
+  const MAX_CHARS = 90000;
+  if (content.length > MAX_CHARS) {
+    content = content.slice(content.length - MAX_CHARS);
+  }
+
+  return [
+    "You are an expert CI/CD log analysis assistant.",
+    "Given numbered log lines, identify the most likely root cause of failure.",
+    "Return ONLY valid JSON with this exact shape:",
+    "{\"category\":\"dependency_error|test_failure|lint_error|env_missing|unknown\",\"rootCauseLineIndex\":123,\"rootCauseLine\":\"...\",\"fixSuggestion\":\"...\"}",
+    "Rules:",
+    "- rootCauseLineIndex must match the numeric line index shown in the logs.",
+    "- Use concise, practical fixSuggestion.",
+    "- If uncertain, use category=unknown.",
+    "\nLOGS:\n",
+    content,
+  ].join("\n");
+}
+
+async function requestGemini(prompt: string, responseMimeType?: string): Promise<string> {
+  const body: any = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+    },
+  };
+
+  if (responseMimeType) {
+    body.generationConfig.responseMimeType = responseMimeType;
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      GEMINI_MODEL
+    )}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`Gemini API error ${response.status}: ${errorBody}`);
+  }
+
+  const data = await response.json();
+  const text = (data?.candidates ?? [])
+    .flatMap((candidate: any) => candidate?.content?.parts ?? [])
+    .map((part: any) => part?.text)
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
+  if (!text) {
+    throw new Error("Gemini returned an empty response");
+  }
+
+  return text;
+}
+
+async function aiAnalysis(lines: string[]): Promise<LogAnalysisResult | null> {
+  if (!GEMINI_API_KEY) return null;
+
+  const prompt = buildPrompt(lines);
+
+  let raw = "";
+  try {
+    raw = await requestGemini(prompt, "application/json");
+  } catch {
+    raw = await requestGemini(prompt);
+  }
+
+  const jsonPayload = findJsonPayload(raw);
+  if (!jsonPayload) {
+    return null;
+  }
+
+  const parsed = JSON.parse(jsonPayload) as {
+    category?: string;
+    rootCauseLineIndex?: number;
+    rootCauseLine?: string;
+    fixSuggestion?: string;
+  };
+
+  const category = normalizeCategory(parsed.category);
+  const safeIndex =
+    typeof parsed.rootCauseLineIndex === "number" &&
+    Number.isFinite(parsed.rootCauseLineIndex)
+      ? Math.max(0, Math.min(lines.length - 1, Math.floor(parsed.rootCauseLineIndex)))
+      : -1;
+
+  const rootCauseLine =
+    (parsed.rootCauseLine ?? "").trim() ||
+    (safeIndex >= 0 ? lines[safeIndex] : "") ||
+    "(No root cause line identified)";
+
+  return {
+    category,
+    rootCauseLineIndex: safeIndex,
+    rootCauseLine,
+    fixSuggestion: parsed.fixSuggestion?.trim() || FIX_SUGGESTIONS[category],
+    lines,
+  };
+}
+
+export async function analyzeLog(rawLog: string): Promise<LogAnalysisResult> {
+  const clean = stripAnsi(rawLog);
+  const lines = clean.split("\n").map((l) => normalizeLine(l.trimEnd()));
+
+  try {
+    const aiResult = await aiAnalysis(lines);
+    if (aiResult) {
+      return aiResult;
+    }
+  } catch {
+    // Fall through to heuristic analysis when AI call fails.
+  }
+
+  return heuristicAnalysis(lines);
 }

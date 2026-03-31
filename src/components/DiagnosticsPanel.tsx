@@ -39,6 +39,7 @@ export const DiagnosticsPanel: React.FC = () => {
     isLoadingDiagnostics,
     refreshDiagnostics,
     activeRepo,
+    repoInsights,
   } = useCIPipeline();
 
   if (!activeRepo) return null;
@@ -71,6 +72,21 @@ export const DiagnosticsPanel: React.FC = () => {
           {isLoadingDiagnostics ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
           Deep Scan
         </button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
+          <p className="text-[10px] font-black uppercase tracking-widest text-tertiary">Conflict Files</p>
+          <p className="text-xl font-black text-white mt-1">{diagnostics?.conflictFiles.length ?? 0}</p>
+        </div>
+        <div className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
+          <p className="text-[10px] font-black uppercase tracking-widest text-tertiary">Stale Branches</p>
+          <p className="text-xl font-black text-white mt-1">{diagnostics?.staleBranches.length ?? 0}</p>
+        </div>
+        <div className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
+          <p className="text-[10px] font-black uppercase tracking-widest text-tertiary">Default Branch</p>
+          <p className="text-xl font-black text-white mt-1">{repoInsights?.defaultBranch ?? "—"}</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -128,7 +144,12 @@ export const DiagnosticsPanel: React.FC = () => {
             </div>
           ) : (
             <div className="py-12 text-center bg-black/20 rounded-3xl border border-white/5 border-dashed">
-                <p className="text-xs font-bold text-tertiary uppercase tracking-widest italic">{isLoadingDiagnostics ? "Engaging scan..." : "No data discovered"}</p>
+                <p className="text-xs font-bold text-tertiary uppercase tracking-widest italic">{isLoadingDiagnostics ? "Engaging scan..." : "No branch divergence data discovered"}</p>
+                {repoInsights && (
+                  <p className="text-[10px] text-tertiary mt-3 uppercase tracking-wider">
+                    Default branch {repoInsights.defaultBranch} with {repoInsights.branchCount} total branches
+                  </p>
+                )}
             </div>
           )}
         </motion.div>
@@ -248,7 +269,14 @@ export const DiagnosticsPanel: React.FC = () => {
                 </div>
                 
                 <div className="flex items-center justify-between mt-6 pt-4 border-t border-white/5">
-                   <button className="text-[9px] font-black text-tertiary uppercase tracking-widest hover:text-white transition-colors">DEPRECATE BRANCH</button>
+                   <a
+                     href={`https://github.com/${activeRepo.fullName}/tree/${encodeURIComponent(b.name)}`}
+                     target="_blank"
+                     rel="noreferrer"
+                     className="text-[9px] font-black text-tertiary uppercase tracking-widest hover:text-white transition-colors"
+                   >
+                     OPEN BRANCH
+                   </a>
                    <ChevronRight size={14} className="text-tertiary/20 group-hover/branch:translate-x-1 group-hover/branch:text-green-400 transition-all" />
                 </div>
               </div>

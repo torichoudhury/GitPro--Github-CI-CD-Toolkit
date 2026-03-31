@@ -33,13 +33,20 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
+  const createNotificationId = () => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  };
+
   const addNotification = (notification: Omit<Notification, "id">) => {
     const newNotification: Notification = {
       ...notification,
-      id: Math.random().toString(36).substr(2, 9),
+      id: createNotificationId(),
     };
 
-    setNotifications((prev) => [...prev, newNotification]);
+    setNotifications((prev) => [...prev.slice(-3), newNotification]);
 
     // Auto-remove notification after duration
     const duration = notification.duration || 4000;

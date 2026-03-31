@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, AlertTriangle, Info } from "lucide-react";
+import { X } from "lucide-react";
 import { useCIPipeline } from "../contexts/CIPipelineContext";
 import type { NudgeType } from "../types";
 
@@ -20,11 +20,13 @@ const NUDGE_BORDER: Record<NudgeType, string> = {
 
 export const NudgeSystem: React.FC = () => {
   const { nudges, dismissNudge } = useCIPipeline();
+  const visibleNudges = nudges.slice(0, 3);
+  const remainingCount = Math.max(0, nudges.length - visibleNudges.length);
 
   return (
     <div className="fixed top-0 left-0 right-0 z-[100] pointer-events-none px-4 pt-2 space-y-2">
       <AnimatePresence>
-        {nudges.map((nudge) => (
+        {visibleNudges.map((nudge) => (
           <motion.div
             key={nudge.id}
             initial={{ y: -80, opacity: 0 }}
@@ -53,6 +55,13 @@ export const NudgeSystem: React.FC = () => {
           </motion.div>
         ))}
       </AnimatePresence>
+      {remainingCount > 0 && (
+        <div className="pointer-events-none text-center">
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-black/50 border border-white/10 text-tertiary">
+            +{remainingCount} more notifications
+          </span>
+        </div>
+      )}
     </div>
   );
 };

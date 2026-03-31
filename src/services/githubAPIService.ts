@@ -6,6 +6,9 @@ import type {
   StaleBranch,
   RateLimitInfo,
   ConnectedRepo,
+  RepoInsights,
+  RepoWorkflowDefinition,
+  RepoCommitSummary,
 } from "../types";
 
 const BASE = "https://api.github.com";
@@ -37,6 +40,47 @@ async function get<T>(path: string): Promise<T> {
     throw new Error(`GitHub API ${res.status} — ${path}: ${body}`);
   }
   return res.json() as Promise<T>;
+}
+
+async function decodeGitHubLogPayload(res: Response): Promise<string> {
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.length === 0) return "";
+
+  const isZipPayload =
+    (res.headers.get("content-type") || "").includes("application/zip") ||
+    (bytes.length >= 4 &&
+      bytes[0] === 0x50 &&
+      bytes[1] === 0x4b &&
+      bytes[2] === 0x03 &&
+      bytes[3] === 0x04);
+
+  if (isZipPayload) {
+    const { unzipSync, strFromU8 } = await import("fflate");
+    const archive = unzipSync(bytes);
+    const entries = Object.keys(archive).sort();
+    const sections: string[] = [];
+
+    for (const name of entries) {
+      if (!/\.(txt|log)$/i.test(name)) continue;
+      const content = strFromU8(archive[name]);
+      if (!content.trim()) continue;
+      sections.push(`===== ${name} =====\n${content}`);
+    }
+
+    if (sections.length > 0) {
+      return sections.join("\n\n");
+    }
+
+    if (entries.length > 0) {
+      return strFromU8(archive[entries[0]]);
+    }
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
 }
 
 // ── Rate Limit ───────────────────────────────────────────────────────────────
@@ -77,6 +121,76 @@ export async function getRepoInfo(
   } catch {
     return null;
   }
+}
+
+export async function getRepositoryWorkflows(
+  fullName: string
+): Promise<RepoWorkflowDefinition[]> {
+  try {
+    const data = await get<any>(`/repos/${fullName}/actions/workflows?per_page=100`);
+    return (data.workflows ?? []).map((workflow: any) => ({
+      id: workflow.id,
+      name: workflow.name,
+      path: workflow.path,
+      state: workflow.state,
+      htmlUrl: workflow.html_url,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getRepositoryRecentCommits(
+  fullName: string,
+  branch: string,
+  perPage = 10
+): Promise<RepoCommitSummary[]> {
+  try {
+    const commits = await get<any[]>(
+      `/repos/${fullName}/commits?sha=${encodeURIComponent(branch)}&per_page=${perPage}`
+    );
+
+    return commits.map((commit: any) => ({
+      sha: commit.sha,
+      message: (commit.commit?.message ?? "").split("\n")[0] || "(no commit message)",
+      htmlUrl: commit.html_url,
+      author: commit.author?.login ?? commit.commit?.author?.name ?? "unknown",
+      avatarUrl: commit.author?.avatar_url,
+      committedAt: commit.commit?.author?.date ?? new Date().toISOString(),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getRepoInsights(
+  fullName: string,
+  defaultBranchHint?: string
+): Promise<RepoInsights> {
+  const repo = await get<any>(`/repos/${fullName}`);
+  const resolvedBranch = defaultBranchHint || repo.default_branch;
+
+  const [workflows, commits, branches] = await Promise.all([
+    getRepositoryWorkflows(fullName),
+    getRepositoryRecentCommits(fullName, resolvedBranch, 10),
+    listBranches(fullName).catch(() => []),
+  ]);
+
+  return {
+    fullName: repo.full_name,
+    description: repo.description ?? "",
+    visibility: repo.private ? "private" : "public",
+    defaultBranch: repo.default_branch,
+    stars: repo.stargazers_count ?? 0,
+    forks: repo.forks_count ?? 0,
+    openIssues: repo.open_issues_count ?? 0,
+    watchers: repo.watchers_count ?? 0,
+    pushedAt: repo.pushed_at,
+    updatedAt: repo.updated_at,
+    branchCount: Array.isArray(branches) ? branches.length : 0,
+    workflows,
+    commits,
+  };
 }
 
 // ── Workflow Runs ─────────────────────────────────────────────────────────────
@@ -141,10 +255,22 @@ export async function getJobLogs(
 ): Promise<string> {
   const res = await fetch(
     `${BASE}/repos/${fullName}/actions/jobs/${jobId}/logs`,
-    { headers: headers() }
+    { headers: headers(), redirect: "follow" }
   );
   if (!res.ok) throw new Error(`Could not fetch logs: ${res.status}`);
-  return res.text();
+  return decodeGitHubLogPayload(res);
+}
+
+export async function getWorkflowRunLogs(
+  fullName: string,
+  runId: number
+): Promise<string> {
+  const res = await fetch(
+    `${BASE}/repos/${fullName}/actions/runs/${runId}/logs`,
+    { headers: headers(), redirect: "follow" }
+  );
+  if (!res.ok) throw new Error(`Could not fetch run logs: ${res.status}`);
+  return decodeGitHubLogPayload(res);
 }
 
 // ── Branch Comparison ─────────────────────────────────────────────────────────

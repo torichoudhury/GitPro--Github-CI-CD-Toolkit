@@ -96,6 +96,41 @@ export interface DiagnosticsSnapshot {
   refreshedAt: string;
 }
 
+// ── Repository Insights ──────────────────────────────────────────────────────
+
+export interface RepoCommitSummary {
+  sha: string;
+  message: string;
+  htmlUrl: string;
+  author: string;
+  avatarUrl?: string;
+  committedAt: string;
+}
+
+export interface RepoWorkflowDefinition {
+  id: number;
+  name: string;
+  path: string;
+  state: "active" | "deleted" | "disabled_fork" | "disabled_inactivity" | "disabled_manually";
+  htmlUrl: string;
+}
+
+export interface RepoInsights {
+  fullName: string;
+  description: string;
+  visibility: "public" | "private";
+  defaultBranch: string;
+  stars: number;
+  forks: number;
+  openIssues: number;
+  watchers: number;
+  pushedAt: string;
+  updatedAt: string;
+  branchCount: number;
+  workflows: RepoWorkflowDefinition[];
+  commits: RepoCommitSummary[];
+}
+
 // ── Nudges ──────────────────────────────────────────────────────────────────
 
 export type NudgeType = "push" | "pull" | "stale_branch" | "ci_failure";

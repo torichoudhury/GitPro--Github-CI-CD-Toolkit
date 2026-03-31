@@ -1,18 +1,10 @@
 import React from "react";
 import { motion } from "framer-motion";
-import { Github, Loader2, AlertCircle } from "lucide-react";
+import { Github, Loader2, AlertCircle, RefreshCcw } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 
 export const Login: React.FC = () => {
-  const { signInWithGitHub, loading, error } = useAuth();
-
-  const handleGitHubLogin = async () => {
-    try {
-      await signInWithGitHub();
-    } catch (err) {
-      console.error("Login failed:", err);
-    }
-  };
+  const { userProfile, refreshProfile, loading, error } = useAuth();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-slate-900 to-black flex items-center justify-center p-4">
@@ -37,7 +29,7 @@ export const Login: React.FC = () => {
               GitPro
             </h1>
             <p className="text-gray-400 text-sm">
-              Sign in with GitHub to continue
+              Profile source: backend/.env
             </p>
           </div>
 
@@ -57,17 +49,27 @@ export const Login: React.FC = () => {
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={handleGitHubLogin}
+            onClick={() => {
+              void refreshProfile();
+            }}
             disabled={loading}
             className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 disabled:from-gray-600 disabled:to-gray-700 rounded-lg font-medium text-black transition-all duration-300 shadow-lg hover:shadow-green-500/25"
           >
             {loading ? (
               <Loader2 className="w-5 h-5 animate-spin" />
             ) : (
-              <Github className="w-5 h-5" />
+              <RefreshCcw className="w-5 h-5" />
             )}
-            {loading ? "Signing in..." : "Continue with GitHub"}
+            {loading ? "Loading profile..." : "Reload GitHub Profile"}
           </motion.button>
+
+          {userProfile && (
+            <div className="mt-4 p-3 rounded-lg border border-green-500/30 bg-green-500/10">
+              <p className="text-xs text-green-400">
+                Loaded as @{userProfile.githubUsername}
+              </p>
+            </div>
+          )}
 
           {/* Features */}
           <div className="mt-8 space-y-3">

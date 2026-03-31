@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
@@ -14,9 +14,16 @@ import {
   Layers,
   History as HistoryIcon,
   RefreshCw,
+  GitCommit,
+  Workflow,
 } from "lucide-react";
 import { useCIPipeline } from "../contexts/CIPipelineContext";
-import type { WorkflowRun, WorkflowJob } from "../types";
+import {
+  getWorkflowJobs,
+  getRepositoryRecentCommits,
+  listBranches,
+} from "../services/githubAPIService";
+import type { WorkflowRun, WorkflowJob, RepoCommitSummary } from "../types";
 
 const PAGE_SIZE = 8;
 
@@ -62,14 +69,98 @@ function StatusBadge({ run }: { run: WorkflowRun }) {
 }
 
 export const PipelineHistory: React.FC = () => {
-  const { pipelineRuns, isLoadingRuns, activeRepo, refreshRuns } = useCIPipeline();
+  const { pipelineRuns, isLoadingRuns, activeRepo, refreshRuns, repoInsights } = useCIPipeline();
   const [page, setPage] = useState(0);
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   const [jobsMap, setJobsMap] = useState<Record<number, WorkflowJob[]>>({});
   const [loadingJobId, setLoadingJobId] = useState<number | null>(null);
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<string>("");
+  const [branchCommits, setBranchCommits] = useState<RepoCommitSummary[]>([]);
+  const [isLoadingBranchCommits, setIsLoadingBranchCommits] = useState(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const [branchRefreshNonce, setBranchRefreshNonce] = useState(0);
 
   const totalPages = Math.ceil(pipelineRuns.length / PAGE_SIZE);
   const pageRuns = pipelineRuns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  useEffect(() => {
+    if (totalPages === 0 && page !== 0) {
+      setPage(0);
+      return;
+    }
+    if (totalPages > 0 && page > totalPages - 1) {
+      setPage(totalPages - 1);
+    }
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    if (!activeRepo) return;
+
+    let isCancelled = false;
+
+    const loadBranches = async () => {
+      try {
+        const branches = await listBranches(activeRepo.fullName);
+        if (isCancelled) return;
+
+        const names = (branches ?? [])
+          .map((branch: any) => branch?.name)
+          .filter(Boolean) as string[];
+
+        setBranchOptions(names);
+        setSelectedBranch((prev) => {
+          if (prev && names.includes(prev)) return prev;
+          if (names.includes(activeRepo.defaultBranch)) return activeRepo.defaultBranch;
+          return names[0] ?? activeRepo.defaultBranch;
+        });
+      } catch {
+        if (isCancelled) return;
+        setBranchOptions([]);
+        setSelectedBranch(activeRepo.defaultBranch);
+      }
+    };
+
+    void loadBranches();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeRepo?.fullName, activeRepo?.defaultBranch]);
+
+  useEffect(() => {
+    if (!activeRepo || !selectedBranch) return;
+
+    let isCancelled = false;
+
+    const loadBranchCommits = async () => {
+      setIsLoadingBranchCommits(true);
+      setBranchError(null);
+      try {
+        const commits = await getRepositoryRecentCommits(
+          activeRepo.fullName,
+          selectedBranch,
+          100
+        );
+        if (isCancelled) return;
+        setBranchCommits(commits);
+      } catch (error: any) {
+        if (isCancelled) return;
+        setBranchCommits([]);
+        setBranchError(error?.message ?? "Failed to load branch commits");
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingBranchCommits(false);
+        }
+      }
+    };
+
+    void loadBranchCommits();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeRepo?.fullName, selectedBranch, branchRefreshNonce]);
 
   const handleExpand = async (run: WorkflowRun) => {
     if (expandedRunId === run.id) {
@@ -81,7 +172,6 @@ export const PipelineHistory: React.FC = () => {
 
     setLoadingJobId(run.id);
     try {
-      const { getWorkflowJobs } = await import("../services/githubAPIService");
       const jobs = await getWorkflowJobs(activeRepo!.fullName, run.id);
       setJobsMap((prev) => ({ ...prev, [run.id]: jobs }));
     } catch (e) {
@@ -117,6 +207,111 @@ export const PipelineHistory: React.FC = () => {
 
       {/* Modern List View */}
       <div className="flex-1 space-y-4">
+        <div className="flex flex-wrap items-center gap-2 px-2">
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-wider text-tertiary">
+            {pipelineRuns.length} runs
+          </span>
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-wider text-tertiary">
+            {branchOptions.length} branches
+          </span>
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-wider text-tertiary">
+            {repoInsights?.workflows.length ?? 0} workflows
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+          <div className="card border-blue-500/10 bg-blue-500/5">
+            <div className="flex items-center gap-2 mb-4">
+              <Workflow size={14} className="text-blue-400" />
+              <h3 className="text-xs font-black uppercase tracking-widest text-blue-400">Workflows</h3>
+            </div>
+
+            {repoInsights?.workflows && repoInsights.workflows.length > 0 ? (
+              <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                {repoInsights.workflows.map((workflow) => (
+                  <a
+                    key={workflow.id}
+                    href={workflow.htmlUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:border-white/20 transition-all group"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate group-hover:text-blue-400 transition-colors">{workflow.name}</p>
+                      <p className="text-[10px] text-tertiary font-mono truncate mt-1">{workflow.path}</p>
+                    </div>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-blue-400/80 whitespace-nowrap">{workflow.state}</span>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-black/20 border border-white/5 text-xs font-bold text-tertiary uppercase tracking-widest text-center">
+                No workflows detected
+              </div>
+            )}
+          </div>
+
+          <div className="card border-green-500/10 bg-green-500/5">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <GitCommit size={14} className="text-green-400" />
+                <h3 className="text-xs font-black uppercase tracking-widest text-green-400">Branch Commits</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  className="bg-black/30 border border-white/10 rounded-lg px-2 py-1 text-[11px] font-mono text-white max-w-[180px]"
+                >
+                  {branchOptions.map((branch) => (
+                    <option key={branch} value={branch}>{branch}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => setBranchRefreshNonce((n) => n + 1)}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-wider text-tertiary hover:text-white hover:bg-white/10 transition-colors"
+                  title="Refresh branch commits"
+                >
+                  <RefreshCw size={11} /> Refresh
+                </button>
+              </div>
+            </div>
+
+            {isLoadingBranchCommits ? (
+              <div className="flex items-center justify-center py-8 text-xs font-bold text-tertiary uppercase tracking-widest gap-2">
+                <Loader2 size={12} className="spin" /> Loading commits...
+              </div>
+            ) : branchError ? (
+              <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 font-mono">{branchError}</div>
+            ) : branchCommits.length > 0 ? (
+              <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                {branchCommits.map((commit) => (
+                  <a
+                    key={commit.sha}
+                    href={commit.htmlUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:border-white/20 transition-all group"
+                  >
+                    <p className="text-xs font-bold text-white truncate group-hover:text-green-400 transition-colors">{commit.message}</p>
+                    <div className="flex items-center justify-between gap-3 mt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono font-bold text-green-400 uppercase">{commit.sha.slice(0, 7)}</span>
+                        <span className="text-[10px] font-bold text-tertiary uppercase">{commit.author}</span>
+                      </div>
+                      <span className="text-[10px] font-bold text-tertiary uppercase">{relativeTime(commit.committedAt)}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-black/20 border border-white/5 text-xs font-bold text-tertiary uppercase tracking-widest text-center">
+                No commits found on this branch
+              </div>
+            )}
+          </div>
+        </div>
+
         {pageRuns.map((run, i) => (
           <motion.div
             key={run.id}
@@ -163,9 +358,15 @@ export const PipelineHistory: React.FC = () => {
                     <span className="text-xs font-bold font-mono text-white tracking-widest">{fmtDuration(run.durationSeconds)}</span>
                  </div>
                  <div className="flex items-center gap-2">
-                    <button className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-tertiary transition-all">
+                    <a
+                      href={run.html_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) => event.stopPropagation()}
+                      className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-tertiary transition-all"
+                    >
                       <ExternalLink size={14} />
-                    </button>
+                    </a>
                     <div className={`p-1.5 rounded-lg transition-transform duration-300 ${expandedRunId === run.id ? 'rotate-180 bg-blue-500/20 text-blue-400' : 'text-tertiary'}`}>
                       <ChevronDown size={18} />
                     </div>
@@ -221,7 +422,7 @@ export const PipelineHistory: React.FC = () => {
         {pipelineRuns.length === 0 && !isLoadingRuns && (
           <div className="flex flex-col items-center justify-center py-20 bg-white/[0.02] rounded-3xl border border-dashed border-white/10">
             <HistoryIcon size={48} className="text-white/10 mb-4" />
-            <p className="text-sm font-bold text-tertiary uppercase tracking-widest">No historical data detected</p>
+            <p className="text-sm font-bold text-tertiary uppercase tracking-widest">No workflow runs detected</p>
           </div>
         )}
       </div>

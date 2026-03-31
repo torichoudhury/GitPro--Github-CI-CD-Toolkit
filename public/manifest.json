@@ -16,6 +16,7 @@
   "host_permissions": [
     "http://localhost:8000/*",
     "https://api.github.com/*",
+    "https://pipelines.actions.githubusercontent.com/*",
     "https://*.googleapis.com/*",
     "https://*.gstatic.com/*",
     "https://*.firebaseio.com/*",

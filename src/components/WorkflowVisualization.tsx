@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Hammer,
@@ -16,6 +16,7 @@ import {
   Terminal,
   Activity,
   ArrowRight,
+  AlertCircle,
 } from "lucide-react";
 import { useCIPipeline } from "../contexts/CIPipelineContext";
 import type { PipelineStage, WorkflowJob, StageStatus } from "../types";
@@ -32,12 +33,118 @@ function conclusionToStatus(
   return "pending";
 }
 
-const STAGE_DEFS = [
-  { id: "build", label: "Environment & Build", icon: Hammer },
-  { id: "lint", label: "Quality Checks",  icon: Zap },
-  { id: "test", label: "Automated Testing",  icon: FlaskConical },
-  { id: "deploy", label: "Staging & Production", icon: Rocket },
+type StageMeta = {
+  id: string;
+  label: string;
+  icon: any;
+  order: number;
+};
+
+type VisualStage = PipelineStage & {
+  jobCount: number;
+  order: number;
+};
+
+const FALLBACK_STAGES: StageMeta[] = [
+  { id: "build", label: "Build", icon: Hammer, order: 10 },
+  { id: "quality", label: "Quality", icon: Zap, order: 20 },
+  { id: "test", label: "Tests", icon: FlaskConical, order: 30 },
+  { id: "deploy", label: "Deploy", icon: Rocket, order: 40 },
 ];
+
+function slugifyLabel(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+}
+
+function inferStageMeta(jobName: string, index: number): StageMeta {
+  const name = jobName.toLowerCase();
+
+  if (/(build|compile|bundle|package)/.test(name)) {
+    return { id: "build", label: "Build", icon: Hammer, order: 10 };
+  }
+  if (/(lint|format|quality|typecheck|validate)/.test(name)) {
+    return { id: "quality", label: "Quality", icon: Zap, order: 20 };
+  }
+  if (/(test|spec|integration|e2e|unit)/.test(name)) {
+    return { id: "test", label: "Tests", icon: FlaskConical, order: 30 };
+  }
+  if (/(deploy|release|publish|rollout|ship)/.test(name)) {
+    return { id: "deploy", label: "Deploy", icon: Rocket, order: 40 };
+  }
+
+  const compactLabel = jobName.length > 28 ? `${jobName.slice(0, 25)}...` : jobName;
+  const slug = slugifyLabel(jobName) || `custom-${index + 1}`;
+  return {
+    id: `custom-${slug}`,
+    label: compactLabel,
+    icon: Activity,
+    order: 100 + index,
+  };
+}
+
+function mergeStageStatus(statuses: StageStatus[]): StageStatus {
+  if (statuses.includes("failure")) return "failure";
+  if (statuses.includes("in_progress")) return "in_progress";
+  if (statuses.every((status) => status === "success")) return "success";
+  return "pending";
+}
+
+function buildStagesFromJobs(currentJobs: WorkflowJob[]): VisualStage[] {
+  if (currentJobs.length === 0) {
+    return FALLBACK_STAGES.map((stage) => ({
+      ...stage,
+      status: "pending" as StageStatus,
+      job: undefined,
+      jobCount: 0,
+    }));
+  }
+
+  const grouped = new Map<
+    string,
+    { meta: StageMeta; jobs: WorkflowJob[]; statuses: StageStatus[] }
+  >();
+
+  currentJobs.forEach((job, index) => {
+    const meta = inferStageMeta(job.name, index);
+    const status = conclusionToStatus(job.status, job.conclusion);
+    const existing = grouped.get(meta.id);
+
+    if (existing) {
+      existing.jobs.push(job);
+      existing.statuses.push(status);
+      return;
+    }
+
+    grouped.set(meta.id, {
+      meta,
+      jobs: [job],
+      statuses: [status],
+    });
+  });
+
+  return Array.from(grouped.values())
+    .map(({ meta, jobs, statuses }) => {
+      const representativeJob =
+        jobs.find((job) => conclusionToStatus(job.status, job.conclusion) === "failure") ||
+        jobs.find((job) => conclusionToStatus(job.status, job.conclusion) === "in_progress") ||
+        jobs[0];
+
+      return {
+        id: meta.id,
+        label: meta.label,
+        icon: meta.icon,
+        status: mergeStageStatus(statuses),
+        job: representativeJob,
+        jobCount: jobs.length,
+        order: meta.order,
+      };
+    })
+    .sort((a, b) => a.order - b.order);
+}
 
 function stageColors(status: StageStatus) {
   switch (status) {
@@ -83,7 +190,7 @@ const LogDrawer: React.FC<{ job: WorkflowJob | null; onClose: () => void }> = ({
           animate={{ x: 0 }}
           exit={{ x: "100%" }}
           transition={{ type: "spring", stiffness: 300, damping: 32 }}
-          className="absolute top-0 right-0 h-full w-[400px] z-50 glass-panel border-l border-white/10 shadow-2xl flex flex-col"
+          className="absolute top-0 right-0 h-full w-full max-w-[340px] z-50 glass-panel border-l border-white/10 shadow-2xl flex flex-col"
         >
           <div className="flex items-center justify-between p-6 border-b border-white/5">
             <div className="flex items-center gap-3">
@@ -161,30 +268,36 @@ const LogDrawer: React.FC<{ job: WorkflowJob | null; onClose: () => void }> = ({
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export const WorkflowVisualization: React.FC = () => {
-  const { currentRun, currentJobs, isLoadingRuns, runsError, activeRepo } =
+  const {
+    currentRun,
+    currentJobs,
+    isLoadingRuns,
+    runsError,
+    activeRepo,
+    repoInsights,
+  } =
     useCIPipeline();
 
   const [selectedJob, setSelectedJob] = useState<WorkflowJob | null>(null);
+  const [isCompact, setIsCompact] = useState(window.innerWidth < 1000);
 
-  const stages: PipelineStage[] = STAGE_DEFS.map((def) => {
-    const job = currentJobs.find((j) =>
-      j.name.toLowerCase().includes(def.id)
-    );
-    const status: StageStatus = job
-      ? conclusionToStatus(job.status, job.conclusion)
-      : "pending";
-    return { ...def, status, job };
-  });
+  useEffect(() => {
+    const onResize = () => setIsCompact(window.innerWidth < 1000);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const stages = buildStagesFromJobs(currentJobs);
 
   const hasActiveTransition = stages.some((s) => s.status === "in_progress");
 
   if (!activeRepo) return null;
 
   return (
-    <div className="h-full flex flex-col gap-10 fade-in relative overflow-hidden">
+    <div className={`h-full flex flex-col ${isCompact ? "gap-4" : "gap-10"} fade-in relative overflow-hidden`}>
       {/* Header */}
       <div className="px-2">
-         <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Stage Visualization</h2>
+        <h2 className={`${isCompact ? "text-xl" : "text-2xl"} font-bold tracking-tight text-white mb-2`}>Stage Visualization</h2>
          <div className="flex items-center gap-2 group cursor-default">
             <Activity size={14} className="text-blue-400" />
             <p className="text-sm font-medium text-secondary group-hover:text-white transition-colors">Architecture Overview for {activeRepo.fullName}</p>
@@ -198,8 +311,26 @@ export const WorkflowVisualization: React.FC = () => {
         </div>
       )}
 
+      {!runsError && currentJobs.length === 0 && repoInsights && (
+        <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 text-secondary flex items-center justify-between gap-4 flex-wrap">
+          <span className="text-sm font-medium">
+            {repoInsights.workflows.length > 0
+              ? `No recent workflow jobs yet. ${repoInsights.workflows.length} workflow definition(s) detected in this repository.`
+              : "No workflow definitions found in this repository yet."}
+          </span>
+          <a
+            href={`https://github.com/${repoInsights.fullName}/actions`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] font-bold text-blue-400 uppercase tracking-widest inline-flex items-center gap-1"
+          >
+            Open Actions <ExternalLink size={12} />
+          </a>
+        </div>
+      )}
+
       {/* Modern Stage Graph */}
-      <div className="flex flex-col xl:flex-row items-center gap-6 justify-center py-10 perspective-1000">
+      <div className={isCompact ? "grid grid-cols-2 gap-2 py-2" : "flex flex-col xl:flex-row items-center gap-4 justify-center py-10 perspective-1000"}>
         {stages.map((stage, i) => {
           const colors = stageColors(stage.status);
           const isActive = stage.status === "in_progress";
@@ -213,8 +344,8 @@ export const WorkflowVisualization: React.FC = () => {
                 animate={{ opacity: 1, rotateY: 0, x: 0 }}
                 transition={{ delay: i * 0.15, type: "spring", stiffness: 100 }}
                 onClick={() => stage.job && setSelectedJob(stage.job)}
-                className={`flex-1 min-w-[240px] max-w-[280px] p-6 rounded-[32px] border transition-all duration-500 cursor-pointer relative group ${colors.border} ${colors.bg} ${isActive ? 'ring-2 ring-blue-500/20 shadow-2xl shadow-blue-500/10' : ''}`}
-                whileHover={{ scale: 1.05, translateY: -8 }}
+                className={`${isCompact ? "w-full min-w-0 max-w-none p-4" : "flex-1 min-w-[240px] max-w-[280px] p-6"} rounded-[32px] border transition-all duration-500 cursor-pointer relative group ${colors.border} ${colors.bg} ${isActive ? 'ring-2 ring-blue-500/20 shadow-2xl shadow-blue-500/10' : ''}`}
+                whileHover={{ scale: 1.03, translateY: -6 }}
               >
                 {/* Visual Feedback */}
                 {isActive && (
@@ -222,18 +353,21 @@ export const WorkflowVisualization: React.FC = () => {
                 )}
                 
                 <div className="relative z-10">
-                   <div className={`p-4 w-16 h-16 rounded-2xl mb-6 flex items-center justify-center transition-all duration-500 ${isSuccess ? 'bg-green-500/20 text-green-400 shadow-lg shadow-green-500/20' : isFailure ? 'bg-red-500/20 text-red-400 shadow-lg shadow-red-500/20' : isActive ? 'bg-blue-500/20 text-blue-400 shadow-xl shadow-blue-500/20' : 'bg-white/5 text-tertiary'}`}>
-                      <stage.icon size={32} strokeWidth={isSuccess || isActive ? 2.5 : 1.5} />
+                   <div className={`${isCompact ? "p-3 w-12 h-12 mb-3" : "p-4 w-16 h-16 mb-6"} rounded-2xl flex items-center justify-center transition-all duration-500 ${isSuccess ? 'bg-green-500/20 text-green-400 shadow-lg shadow-green-500/20' : isFailure ? 'bg-red-500/20 text-red-400 shadow-lg shadow-red-500/20' : isActive ? 'bg-blue-500/20 text-blue-400 shadow-xl shadow-blue-500/20' : 'bg-white/5 text-tertiary'}`}>
+                     <stage.icon size={isCompact ? 22 : 32} strokeWidth={isSuccess || isActive ? 2.5 : 1.5} />
                    </div>
                    
-                   <h3 className="text-lg font-bold text-white mb-2 tracking-tight">{stage.label}</h3>
+                   <h3 className={`${isCompact ? "text-sm" : "text-lg"} font-bold text-white mb-2 tracking-tight`}>{stage.label}</h3>
                    
-                   <div className="flex items-center gap-3 mb-6">
+                   <div className={`flex items-center gap-2 ${isCompact ? "mb-3" : "mb-6"}`}>
                       <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest ${colors.text} ${colors.border}`}>
                          <StageIcon status={stage.status} size={10} /> {stage.status.replace("_", " ")}
                       </div>
                       {stage.job?.durationSeconds != null && (
                         <span className="text-[10px] font-mono font-bold text-tertiary tracking-tighter uppercase">{fmtSeconds(stage.job.durationSeconds)} EXECTIME</span>
+                      )}
+                      {stage.jobCount > 1 && (
+                        <span className="text-[10px] font-mono font-bold text-blue-400/80 tracking-tighter uppercase">{stage.jobCount} JOBS</span>
                       )}
                    </div>
 
@@ -244,8 +378,8 @@ export const WorkflowVisualization: React.FC = () => {
                 </div>
               </motion.div>
 
-              {i < stages.length - 1 && (
-                <div className="hidden xl:flex items-center py-4">
+              {i < stages.length - 1 && !isCompact && (
+                <div className="hidden xl:flex items-center py-2">
                   <motion.div
                     animate={hasActiveTransition ? { opacity: [0.2, 0.6, 0.2] } : { opacity: 0.2 }}
                     transition={hasActiveTransition ? { repeat: Infinity, duration: 1.5 } : {}}
@@ -293,9 +427,3 @@ export const WorkflowVisualization: React.FC = () => {
     </div>
   );
 };
-
-const AlertCircle = ({ size, className }: { size: number; className?: string }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-  </svg>
-);

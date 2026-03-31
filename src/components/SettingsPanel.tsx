@@ -127,6 +127,24 @@ export const ConfigManager: React.FC = () => {
         <p className="text-xs mt-0.5" style={{ color: "#8b949e" }}>Configure your GitHub token, repos, nudges, and polling</p>
       </div>
 
+      <div className="card p-4" style={{ background: "rgba(22, 27, 34, 0.7)", borderColor: "rgba(88, 166, 255, 0.25)" }}>
+        <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "#58a6ff" }}>Current Session</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider" style={{ color: "#6e7681" }}>Active Repo</p>
+            <p className="text-xs font-mono truncate" style={{ color: "#e6edf3" }}>{activeRepo?.fullName ?? "None"}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider" style={{ color: "#6e7681" }}>Connected Repos</p>
+            <p className="text-xs font-mono" style={{ color: "#e6edf3" }}>{config.connectedRepos.length}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider" style={{ color: "#6e7681" }}>Polling</p>
+            <p className="text-xs font-mono" style={{ color: "#e6edf3" }}>{config.pollingInterval}s</p>
+          </div>
+        </div>
+      </div>
+
       {/* Token */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="card p-5">
         <div className="flex items-center gap-2 mb-4">
@@ -241,12 +259,9 @@ export const ConfigManager: React.FC = () => {
                   {!isActive && (
                     <button
                       onClick={() => setActiveRepo(repo)}
-                      className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-colors"
-                      style={{ background: "#21262d", color: "#8b949e" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = "#8b949e")}
+                      className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-colors border border-white/10 bg-white/5 text-gray-300 hover:text-white hover:bg-white/10"
                     >
-                      Use Demo
+                      Use Repo
                     </button>
                   )}
                   <button

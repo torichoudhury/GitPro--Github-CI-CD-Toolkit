@@ -15,7 +15,10 @@ import {
   getBranchDivergence,
   getConflictRiskFiles,
   getStaleBranches,
+  listBranches,
+  getRepoInsights,
 } from "../services/githubAPIService";
+import { useAuth } from "./AuthContext";
 import {
   shouldFire,
   markFired,
@@ -31,6 +34,7 @@ import type {
   PollingInterval,
   ConnectedRepo,
   RateLimitInfo,
+  RepoInsights,
 } from "../types";
 
 // ── Default config ────────────────────────────────────────────────────────────
@@ -98,6 +102,11 @@ interface CIPipelineContextType {
   diagnostics: DiagnosticsSnapshot | null;
   isLoadingDiagnostics: boolean;
 
+  // Repository insights
+  repoInsights: RepoInsights | null;
+  isLoadingRepoInsights: boolean;
+  repoInsightsError: string | null;
+
   // Nudges
   nudges: ActiveNudge[];
   dismissNudge: (id: string) => void;
@@ -106,8 +115,9 @@ interface CIPipelineContextType {
   rateLimit: RateLimitInfo | null;
 
   // Manual refresh
-  refreshRuns: () => void;
-  refreshDiagnostics: () => void;
+  refreshRuns: () => Promise<void>;
+  refreshDiagnostics: () => Promise<void>;
+  refreshRepoInsights: () => Promise<void>;
 }
 
 const CIPipelineContext = createContext<CIPipelineContextType | undefined>(
@@ -125,6 +135,7 @@ export const useCIPipeline = () => {
 export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
+  const { userProfile } = useAuth();
   const [config, _setConfig] = useState<AppConfig>(loadConfig);
   const [activeRepo, setActiveRepo] = useState<ConnectedRepo | null>(() => {
     const cfg = loadConfig();
@@ -140,11 +151,16 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
   const [isLoadingDiagnostics, setIsLoadingDiagnostics] = useState(false);
 
+  const [repoInsights, setRepoInsights] = useState<RepoInsights | null>(null);
+  const [isLoadingRepoInsights, setIsLoadingRepoInsights] = useState(false);
+  const [repoInsightsError, setRepoInsightsError] = useState<string | null>(null);
+
   const [nudges, setNudges] = useState<ActiveNudge[]>([]);
   const [rateLimit, setRateLimit] = useState<RateLimitInfo | null>(null);
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const diagTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const insightsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Config handler ──────────────────────────────────────────────────────────
 
@@ -161,7 +177,79 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
     setToken(config.githubToken);
   }, [config.githubToken]);
 
+  // Seed CI repositories from fetched GitHub profile when no repos are configured yet.
+  useEffect(() => {
+    if (!userProfile) return;
+
+    const profileRepos: ConnectedRepo[] = (userProfile.repositories ?? [])
+      .filter((repo) => Boolean(repo.full_name))
+      .map((repo) => ({
+        fullName: repo.full_name,
+        defaultBranch: repo.default_branch || "main",
+      }));
+
+    _setConfig((prev) => {
+      const hasConfiguredRepos = prev.connectedRepos.length > 0;
+      const inferredUsername = userProfile.githubUsername ?? prev.githubUsername;
+      const shouldUpdateUsername = inferredUsername !== prev.githubUsername;
+
+      if (hasConfiguredRepos || profileRepos.length === 0) {
+        if (!shouldUpdateUsername) {
+          return prev;
+        }
+
+        const next = {
+          ...prev,
+          githubUsername: inferredUsername,
+        };
+        saveConfig(next);
+        return next;
+      }
+
+      const next = {
+        ...prev,
+        githubUsername: inferredUsername,
+        connectedRepos: profileRepos,
+      };
+      saveConfig(next);
+      return next;
+    });
+  }, [userProfile]);
+
+  // Keep active repository aligned with connected repository list.
+  useEffect(() => {
+    if (config.connectedRepos.length === 0) {
+      setActiveRepo(null);
+      return;
+    }
+
+    setActiveRepo((prev) => {
+      if (prev && config.connectedRepos.some((repo) => repo.fullName === prev.fullName)) {
+        return prev;
+      }
+      return config.connectedRepos[0];
+    });
+  }, [config.connectedRepos]);
+
   // ── Fetch pipeline runs ─────────────────────────────────────────────────────
+
+  const fetchRepoInsights = useCallback(async () => {
+    if (!activeRepo) return;
+    setIsLoadingRepoInsights(true);
+    setRepoInsightsError(null);
+    try {
+      const insights = await getRepoInsights(
+        activeRepo.fullName,
+        activeRepo.defaultBranch
+      );
+      setRepoInsights(insights);
+    } catch (e: any) {
+      setRepoInsights(null);
+      setRepoInsightsError(e?.message ?? "Failed to fetch repository insights");
+    } finally {
+      setIsLoadingRepoInsights(false);
+    }
+  }, [activeRepo]);
 
   const fetchRuns = useCallback(async () => {
     if (!activeRepo) return;
@@ -178,21 +266,25 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
       if (latest) {
         const jobs = await getWorkflowJobs(activeRepo.fullName, latest.id);
         setCurrentJobs(jobs);
+      } else {
+        setCurrentJobs([]);
 
         // CI failure nudge
-        if (
-          latest.conclusion === "failure" &&
-          config.nudgeToggles.ci_failure &&
-          shouldFire(activeRepo.fullName, "ci_failure")
-        ) {
-          const nudge = buildNudge(
-            activeRepo.fullName,
-            "ci_failure",
-            `Run #${latest.run_number} on ${latest.head_branch} failed.`
-          );
-          markFired(activeRepo.fullName, "ci_failure");
-          setNudges((prev) => [nudge, ...prev]);
-        }
+      }
+
+      if (
+        latest &&
+        latest.conclusion === "failure" &&
+        config.nudgeToggles.ci_failure &&
+        shouldFire(activeRepo.fullName, "ci_failure")
+      ) {
+        const nudge = buildNudge(
+          activeRepo.fullName,
+          "ci_failure",
+          `Run #${latest.run_number} on ${latest.head_branch} failed.`
+        );
+        markFired(activeRepo.fullName, "ci_failure");
+        setNudges((prev) => [nudge, ...prev]);
       }
 
       // Rate limit
@@ -212,28 +304,47 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
     setIsLoadingDiagnostics(true);
     try {
       const base = activeRepo.defaultBranch;
+      let compareBranch = currentRun?.head_branch;
+
+      if (!compareBranch || compareBranch === base) {
+        try {
+          const branches = await listBranches(activeRepo.fullName);
+          const fallbackBranch = branches.find(
+            (branch: any) => branch?.name && branch.name !== base
+          )?.name;
+          if (fallbackBranch) {
+            compareBranch = fallbackBranch;
+          }
+        } catch {
+          // Ignore fallback branch lookup failures.
+        }
+      }
 
       let divergence = null;
       let conflictFiles: any[] = [];
       let staleBranches: any[] = [];
 
-      try {
-        const fetchTarget = currentRun?.head_branch ?? base;
-        divergence = await getBranchDivergence(
-          activeRepo.fullName,
-          base,
-          fetchTarget
-        );
-      } catch { /* ignore */ }
+      if (compareBranch && compareBranch !== base) {
+        try {
+          divergence = await getBranchDivergence(
+            activeRepo.fullName,
+            base,
+            compareBranch
+          );
+        } catch {
+          // ignore
+        }
 
-      try {
-        const fetchTarget = currentRun?.head_branch ?? base;
-        conflictFiles = await getConflictRiskFiles(
-          activeRepo.fullName,
-          base,
-          fetchTarget
-        );
-      } catch { /* ignore */ }
+        try {
+          conflictFiles = await getConflictRiskFiles(
+            activeRepo.fullName,
+            base,
+            compareBranch
+          );
+        } catch {
+          // ignore
+        }
+      }
 
       try {
         staleBranches = await getStaleBranches(activeRepo.fullName, 7);
@@ -265,27 +376,38 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
     } finally {
       setIsLoadingDiagnostics(false);
     }
-  }, [activeRepo, config.nudgeToggles.stale_branch]);
+  }, [activeRepo, config.nudgeToggles.stale_branch, currentRun?.head_branch]);
 
   // ── Polling ─────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!activeRepo || !config.githubToken) return;
+    if (!activeRepo) {
+      setRepoInsights(null);
+      setRepoInsightsError(null);
+      setDiagnostics(null);
+      setPipelineRuns([]);
+      setCurrentRun(null);
+      setCurrentJobs([]);
+      return;
+    }
 
     fetchRuns();
     fetchDiagnostics();
+    fetchRepoInsights();
 
     const intervalMs = config.pollingInterval * 1000;
 
     pollTimerRef.current = setInterval(fetchRuns, intervalMs);
     diagTimerRef.current = setInterval(fetchDiagnostics, 30 * 1000); // Poll diagnostics every 30s instead of 5m
+    insightsTimerRef.current = setInterval(fetchRepoInsights, 60 * 1000);
 
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       if (diagTimerRef.current) clearInterval(diagTimerRef.current);
+      if (insightsTimerRef.current) clearInterval(insightsTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRepo?.fullName, config.pollingInterval, config.githubToken]);
+  }, [activeRepo?.fullName, config.pollingInterval]);
 
   // ── Dismiss nudge ────────────────────────────────────────────────────────────
 
@@ -311,11 +433,15 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
         runsError,
         diagnostics,
         isLoadingDiagnostics,
+        repoInsights,
+        isLoadingRepoInsights,
+        repoInsightsError,
         nudges,
         dismissNudge,
         rateLimit,
         refreshRuns: fetchRuns,
         refreshDiagnostics: fetchDiagnostics,
+        refreshRepoInsights: fetchRepoInsights,
       }}
     >
       {children}
