@@ -76,10 +76,10 @@ export const Login: React.FC = () => {
             </h3>
             <div className="space-y-2">
               {[
-                "AI-powered development assistant",
-                "Project analytics and insights",
-                "Automated code generation",
-                "Real-time collaboration tools",
+                "Real-time CI/CD pipeline visualization",
+                "Branch divergence & conflict risk diagnostics",
+                "Smart nudges before problems happen",
+                "Plain-English CI log failure translator",
               ].map((feature, index) => (
                 <motion.div
                   key={index}

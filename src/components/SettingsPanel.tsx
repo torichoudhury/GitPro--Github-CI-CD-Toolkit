@@ -1,520 +1,304 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { useTheme } from "../contexts/ThemeContext";
-import { Palette, Plug, Bell, Save, RotateCcw } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  CheckCircle,
+  XCircle,
+  Plus,
+  Trash2,
+  Loader2,
+  Key,
+  GitBranch,
+  BellRing,
+  Timer,
+} from "lucide-react";
+import { useCIPipeline } from "../contexts/CIPipelineContext";
+import { validateToken, getRepoInfo, setToken } from "../services/githubAPIService";
+import type { PollingInterval } from "../types";
 
-interface SettingSection {
-  id: string;
-  title: string;
-  icon: React.ComponentType<any>;
-  description: string;
+const POLLING_OPTIONS: { label: string; value: PollingInterval }[] = [
+  { label: "15 s", value: 15 },
+  { label: "30 s", value: 30 },
+  { label: "1 min", value: 60 },
+  { label: "5 min", value: 300 },
+];
+
+function Toggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className="toggle-track"
+      style={{ background: checked ? "#3fb950" : "#30363d" }}
+    >
+      <div
+        className="toggle-thumb"
+        style={{ left: checked ? "23px" : "3px" }}
+      />
+    </button>
+  );
 }
 
-export const SettingsPanel: React.FC = () => {
-  const [activeSection, setActiveSection] = useState("appearance");
-  const { isDarkMode, toggleDarkMode } = useTheme();
-  const [settings, setSettings] = useState({
-    greenMode: true,
-    notifications: true,
-    soundEnabled: true,
-    language: "en",
-    autoSave: true,
-    aiModel: "gpt-4",
-    apiKey: "",
-    enablePlugins: true,
-  });
+export const ConfigManager: React.FC = () => {
+  const { config, setConfig, setActiveRepo } = useCIPipeline();
 
-  const sections: SettingSection[] = [
-    {
-      id: "appearance",
-      title: "Appearance",
-      icon: Palette,
-      description: "Customize your interface",
-    },
-    {
-      id: "plugins",
-      title: "Plugins",
-      icon: Plug,
-      description: "Enable and configure plugins",
-    },
-    {
-      id: "notifications",
-      title: "Notifications",
-      icon: Bell,
-      description: "Configure alerts and updates",
-    },
-  ];
+  // Token section
+  const [tokenInput, setTokenInput] = useState(config.githubToken);
+  const [showToken, setShowToken] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [tokenStatus, setTokenStatus] = useState<"valid" | "invalid" | null>(
+    config.githubToken ? "valid" : null
+  );
+  const [tokenLogin, setTokenLogin] = useState(config.githubUsername);
 
-  const handleSettingChange = (key: string, value: any) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
-  };
+  // Repo section
+  const [repoInput, setRepoInput] = useState("");
+  const [addingRepo, setAddingRepo] = useState(false);
+  const [repoError, setRepoError] = useState<string | null>(null);
 
-  const handleSave = () => {
-    // Simulate save action
-    console.log("Settings saved:", settings);
-  };
-
-  const handleReset = () => {
-    setSettings({
-      greenMode: true,
-      notifications: true,
-      soundEnabled: true,
-      language: "en",
-      autoSave: true,
-      aiModel: "gpt-4",
-      apiKey: "",
-      enablePlugins: true,
-    });
-  };
-
-  const renderSectionContent = () => {
-    switch (activeSection) {
-      case "appearance":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-lg font-medium text-white mb-4">
-                Theme Preferences
-              </h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Dark Mode</p>
-                    <p className="text-gray-400 text-sm">
-                      Use dark theme across the interface
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={toggleDarkMode}
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      isDarkMode ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: isDarkMode ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-medium text-white mb-4">
-                System Preferences
-              </h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Enable Notifications</p>
-                    <p className="text-gray-400 text-sm">
-                      Receive alerts and updates
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() =>
-                      handleSettingChange(
-                        "notifications",
-                        !settings.notifications
-                      )
-                    }
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      settings.notifications ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: settings.notifications ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Sound Effects</p>
-                    <p className="text-gray-400 text-sm">
-                      Play sounds for notifications
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() =>
-                      handleSettingChange(
-                        "soundEnabled",
-                        !settings.soundEnabled
-                      )
-                    }
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      settings.soundEnabled ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: settings.soundEnabled ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Auto Save</p>
-                    <p className="text-gray-400 text-sm">
-                      Automatically save changes
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() =>
-                      handleSettingChange("autoSave", !settings.autoSave)
-                    }
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      settings.autoSave ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: settings.autoSave ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Enable Plugins</p>
-                    <p className="text-gray-400 text-sm">
-                      Enable and configure plugins
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() =>
-                      handleSettingChange(
-                        "enablePlugins",
-                        !settings.enablePlugins
-                      )
-                    }
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      settings.enablePlugins ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: settings.enablePlugins ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-medium text-white mb-4">
-                AI Configuration
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-white mb-2">AI Model</label>
-                  <select
-                    value={settings.aiModel}
-                    onChange={(e) =>
-                      handleSettingChange("aiModel", e.target.value)
-                    }
-                    className="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-green-500"
-                  >
-                    <option value="gpt-4">GPT-4</option>
-                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                    <option value="claude-3">Claude 3</option>
-                    <option value="gemini-pro">Gemini Pro</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-
-      case "plugins":
-        return (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-medium text-white">
-                  Plugin Management
-                </h3>
-                <p className="text-gray-400">
-                  Enable and configure available plugins
-                </p>
-              </div>
-              <motion.button
-                whileTap={{ scale: 0.95 }}
-                onClick={() =>
-                  handleSettingChange("enablePlugins", !settings.enablePlugins)
-                }
-                className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                  settings.enablePlugins ? "bg-green-500" : "bg-gray-600"
-                }`}
-              >
-                <motion.div
-                  layout
-                  className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                  style={{ left: settings.enablePlugins ? "26px" : "2px" }}
-                />
-              </motion.button>
-            </div>
-
-            <div className="space-y-3">
-              {[
-                {
-                  name: "Code Optimizer",
-                  description: "AI-powered code optimization",
-                  enabled: true,
-                },
-                {
-                  name: "Test Generator",
-                  description: "Automatic test case generation",
-                  enabled: true,
-                },
-                {
-                  name: "Documentation AI",
-                  description: "Smart documentation writer",
-                  enabled: false,
-                },
-                {
-                  name: "Security Scanner",
-                  description: "Vulnerability detection",
-                  enabled: true,
-                },
-                {
-                  name: "Performance Monitor",
-                  description: "Real-time performance tracking",
-                  enabled: false,
-                },
-              ].map((plugin, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg border border-gray-600"
-                >
-                  <div>
-                    <h4 className="text-white font-medium">{plugin.name}</h4>
-                    <p className="text-gray-400 text-sm">
-                      {plugin.description}
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      plugin.enabled ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: plugin.enabled ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-
-      case "notifications":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-lg font-medium text-white mb-4">
-                Notification Preferences
-              </h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Enable Notifications</p>
-                    <p className="text-gray-400 text-sm">
-                      Receive alerts and updates
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() =>
-                      handleSettingChange(
-                        "notifications",
-                        !settings.notifications
-                      )
-                    }
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      settings.notifications ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: settings.notifications ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Sound Effects</p>
-                    <p className="text-gray-400 text-sm">
-                      Play sounds for notifications
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() =>
-                      handleSettingChange(
-                        "soundEnabled",
-                        !settings.soundEnabled
-                      )
-                    }
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      settings.soundEnabled ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: settings.soundEnabled ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-white">Auto Save</p>
-                    <p className="text-gray-400 text-sm">
-                      Automatically save changes
-                    </p>
-                  </div>
-                  <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() =>
-                      handleSettingChange("autoSave", !settings.autoSave)
-                    }
-                    className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
-                      settings.autoSave ? "bg-green-500" : "bg-gray-600"
-                    }`}
-                  >
-                    <motion.div
-                      layout
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-lg"
-                      style={{ left: settings.autoSave ? "26px" : "2px" }}
-                    />
-                  </motion.button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-
-      default:
-        return (
-          <div className="text-center text-gray-400 py-12">
-            Select a settings category
-          </div>
-        );
+  const handleValidateToken = async () => {
+    setValidating(true);
+    setTokenStatus(null);
+    try {
+      const result = await validateToken(tokenInput);
+      if (result.valid) {
+        setTokenStatus("valid");
+        setTokenLogin(result.login ?? "");
+        setToken(tokenInput);
+        setConfig({
+          githubToken: tokenInput,
+          githubUsername: result.login ?? "",
+        });
+      } else {
+        setTokenStatus("invalid");
+      }
+    } catch {
+      setTokenStatus("invalid");
+    } finally {
+      setValidating(false);
     }
   };
 
+  const handleAddRepo = async () => {
+    const trimmed = repoInput.trim();
+    if (!trimmed || !trimmed.includes("/")) {
+      setRepoError("Use owner/repo-name format");
+      return;
+    }
+    if (config.connectedRepos.find((r) => r.fullName === trimmed)) {
+      setRepoError("Already added");
+      return;
+    }
+    setAddingRepo(true);
+    setRepoError(null);
+    try {
+      const info = await getRepoInfo(trimmed);
+      if (!info) {
+        setRepoError("Repo not found or token lacks access");
+        return;
+      }
+      const newRepos = [...config.connectedRepos, info];
+      setConfig({ connectedRepos: newRepos });
+      setActiveRepo(newRepos[0]);
+      setRepoInput("");
+    } catch (e: any) {
+      setRepoError(e.message ?? "Failed to add repo");
+    } finally {
+      setAddingRepo(false);
+    }
+  };
+
+  const handleRemoveRepo = (fullName: string) => {
+    const newRepos = config.connectedRepos.filter((r) => r.fullName !== fullName);
+    setConfig({ connectedRepos: newRepos });
+    setActiveRepo(newRepos[0] ?? null);
+  };
+
   return (
-    <div className="h-full flex bg-theme-primary">
-      {/* Settings Navigation */}
-      <div className="w-80 border-r border-theme bg-theme-secondary">
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="p-6"
-        >
-          <h2 className="text-xl font-bold text-theme-primary mb-6">
-            Settings
-          </h2>
-          <div className="space-y-2">
-            {sections.map((section) => (
-              <motion.button
-                key={section.id}
-                whileHover={{ scale: 1.02, x: 4 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setActiveSection(section.id)}
-                className={`w-full flex items-center gap-3 p-4 rounded-xl transition-all duration-300 ${
-                  activeSection === section.id
-                    ? "bg-accent-theme text-theme-primary font-medium shadow-lg"
-                    : "hover:bg-theme-secondary text-theme-secondary hover:text-theme-primary"
-                }`}
-              >
-                <section.icon className="w-5 h-5" />
-                <div className="text-left">
-                  <p className="font-medium">{section.title}</p>
-                  <p
-                    className={`text-xs ${
-                      activeSection === section.id
-                        ? "text-black/70"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {section.description}
-                  </p>
-                </div>
-              </motion.button>
-            ))}
-          </div>
-        </motion.div>
+    <div className="h-full flex flex-col p-6 overflow-y-auto gap-6" style={{ background: "#0d1117" }}>
+      <div>
+        <h2 className="text-lg font-semibold" style={{ color: "#e6edf3" }}>Settings</h2>
+        <p className="text-xs mt-0.5" style={{ color: "#8b949e" }}>Configure your GitHub token, repos, nudges, and polling</p>
       </div>
 
-      {/* Settings Content */}
-      <div className="flex-1 flex flex-col">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-6 border-b border-theme bg-theme-secondary"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xl font-bold text-theme-primary">
-                {sections.find((s) => s.id === activeSection)?.title}
-              </h3>
-              <p className="text-theme-secondary">
-                {sections.find((s) => s.id === activeSection)?.description}
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleReset}
-                className="flex items-center gap-2 px-4 py-2 bg-theme-secondary hover:bg-theme-secondary/80 rounded-lg text-theme-primary transition-all duration-300"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Reset
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleSave}
-                className="flex items-center gap-2 px-4 py-2 bg-accent-theme hover:opacity-90 rounded-lg text-theme-primary font-medium transition-all duration-300"
-              >
-                <Save className="w-4 h-4" />
-                Save Changes
-              </motion.button>
-            </div>
-          </div>
-        </motion.div>
+      {/* Token */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Key size={16} style={{ color: "#58a6ff" }} />
+          <h3 className="font-semibold text-sm" style={{ color: "#e6edf3" }}>GitHub Personal Access Token</h3>
+        </div>
 
-        <motion.div
-          key={activeSection}
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.3 }}
-          className="flex-1 p-6 overflow-y-auto"
-        >
-          {renderSectionContent()}
-        </motion.div>
-      </div>
+        <div className="flex gap-2 mb-3">
+          <div className="relative flex-1">
+            <input
+              type={showToken ? "text" : "password"}
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              placeholder="ghp_..."
+              className="w-full pr-10 font-mono"
+            />
+            <button
+              onClick={() => setShowToken((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+              style={{ color: "#6e7681" }}
+            >
+              {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+          <button
+            onClick={handleValidateToken}
+            disabled={validating || !tokenInput}
+            className="flex items-center gap-2 px-4 py-2 rounded font-mono text-sm disabled:opacity-40"
+            style={{ background: "#1f6feb", color: "#e6edf3" }}
+          >
+            {validating ? <Loader2 size={13} className="spin" /> : null}
+            Validate
+          </button>
+        </div>
+
+        {tokenStatus === "valid" && (
+          <div className="flex items-center gap-2 text-xs" style={{ color: "#3fb950" }}>
+            <CheckCircle size={13} />
+            Authenticated as <strong>{tokenLogin}</strong>
+          </div>
+        )}
+        {tokenStatus === "invalid" && (
+          <div className="flex items-center gap-2 text-xs" style={{ color: "#f85149" }}>
+            <XCircle size={13} />
+            Token invalid or insufficient scopes (need repo + workflow)
+          </div>
+        )}
+        <p className="text-xs mt-2" style={{ color: "#6e7681" }}>
+          Token from <code className="font-mono" style={{ color: "#8b949e" }}>.env</code> is pre-loaded. Changes here override it for this session.
+        </p>
+      </motion.div>
+
+      {/* Repos */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <GitBranch size={16} style={{ color: "#3fb950" }} />
+          <h3 className="font-semibold text-sm" style={{ color: "#e6edf3" }}>Connected Repositories</h3>
+        </div>
+
+        <div className="flex gap-2 mb-3">
+          <input
+            type="text"
+            value={repoInput}
+            onChange={(e) => { setRepoInput(e.target.value); setRepoError(null); }}
+            placeholder="owner/repo-name"
+            className="flex-1 font-mono"
+            onKeyDown={(e) => e.key === "Enter" && handleAddRepo()}
+          />
+          <button
+            onClick={handleAddRepo}
+            disabled={addingRepo || !repoInput.trim()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded font-mono text-sm disabled:opacity-40"
+            style={{ background: "#3fb950", color: "#0d1117", fontWeight: 600 }}
+          >
+            {addingRepo ? <Loader2 size={13} className="spin" /> : <Plus size={13} />}
+            Add
+          </button>
+        </div>
+
+        {repoError && (
+          <p className="text-xs mb-2" style={{ color: "#f85149" }}>{repoError}</p>
+        )}
+
+        <div className="space-y-2">
+          {config.connectedRepos.map((repo) => (
+            <div
+              key={repo.fullName}
+              className="flex items-center justify-between px-3 py-2 rounded"
+              style={{ background: "#0d1117", border: "1px solid #21262d" }}
+            >
+              <div>
+                <p className="font-mono text-xs" style={{ color: "#e6edf3" }}>{repo.fullName}</p>
+                <p className="text-xs" style={{ color: "#6e7681" }}>default: {repo.defaultBranch}</p>
+              </div>
+              <button
+                onClick={() => handleRemoveRepo(repo.fullName)}
+                className="text-gray-600 hover:text-red-400"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+          {config.connectedRepos.length === 0 && (
+            <p className="text-xs" style={{ color: "#6e7681" }}>No repos yet. Add one above.</p>
+          )}
+        </div>
+      </motion.div>
+
+      {/* Nudge toggles */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <BellRing size={16} style={{ color: "#d29922" }} />
+          <h3 className="font-semibold text-sm" style={{ color: "#e6edf3" }}>Smart Nudges</h3>
+        </div>
+        <div className="space-y-3">
+          {(
+            [
+              { key: "push", label: "Push Nudge", desc: "Alert when no push for 2+ hours" },
+              { key: "pull", label: "Pull Nudge", desc: "Alert when base branch has new commits" },
+              { key: "stale_branch", label: "Stale Branch", desc: "Alert when branch inactive 7+ days" },
+              { key: "ci_failure", label: "CI Failure", desc: "Alert immediately when pipeline fails" },
+            ] as const
+          ).map(({ key, label, desc }) => (
+            <div key={key} className="flex items-center justify-between">
+              <div>
+                <p className="text-sm" style={{ color: "#e6edf3" }}>{label}</p>
+                <p className="text-xs" style={{ color: "#6e7681" }}>{desc}</p>
+              </div>
+              <Toggle
+                checked={config.nudgeToggles[key]}
+                onChange={(v) =>
+                  setConfig({ nudgeToggles: { ...config.nudgeToggles, [key]: v } })
+                }
+              />
+            </div>
+          ))}
+        </div>
+      </motion.div>
+
+      {/* Polling interval */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Timer size={16} style={{ color: "#58a6ff" }} />
+          <h3 className="font-semibold text-sm" style={{ color: "#e6edf3" }}>Polling Interval</h3>
+        </div>
+        <div className="flex gap-2">
+          {POLLING_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setConfig({ pollingInterval: opt.value })}
+              className="px-3 py-1.5 rounded font-mono text-xs"
+              style={{
+                background:
+                  config.pollingInterval === opt.value
+                    ? "#1f6feb"
+                    : "#161b22",
+                color:
+                  config.pollingInterval === opt.value ? "#e6edf3" : "#8b949e",
+                border:
+                  config.pollingInterval === opt.value
+                    ? "1px solid #58a6ff"
+                    : "1px solid #30363d",
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </motion.div>
     </div>
   );
 };
+
+// Alias for Dashboard import
+export const SettingsPanel = ConfigManager;

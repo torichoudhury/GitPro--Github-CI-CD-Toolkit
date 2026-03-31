@@ -1,169 +1,197 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Terminal,
-  FolderOpen,
-  BarChart3,
-  Settings,
-  MessageCircle,
+  GitBranch,
   Activity,
-  User,
-  Monitor,
+  History,
+  Stethoscope,
+  FileText,
+  Settings,
 } from "lucide-react";
-import { Header } from "./Header";
-import { ChatInterface } from "./ChatInterface";
-import { CommandConsole } from "./CommandConsole";
-import { ProjectView } from "./ProjectView";
-import { AnalyticsPanel } from "./AnalyticsPanel";
+import { WorkflowVisualization } from "./WorkflowVisualization";
+import { PipelineMonitor } from "./PipelineMonitor";
+import { PipelineHistory } from "./PipelineHistory";
+import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { LogTranslator } from "./LogTranslator";
 import { SettingsPanel } from "./SettingsPanel";
-import { UserProfile } from "./UserProfile";
-import { RepoMonitoring } from "./RepoMonitoring";
+import { NudgeSystem } from "./NudgeSystem";
+import { useCIPipeline } from "../contexts/CIPipelineContext";
 
 type PanelType =
-  | "chat"
-  | "console"
-  | "projects"
-  | "analytics"
-  | "settings"
-  | "profile"
-  | "monitoring";
+  | "pipeline"
+  | "monitor"
+  | "history"
+  | "diagnostics"
+  | "logs"
+  | "settings";
+
+const NAV_ITEMS = [
+  {
+    id: "pipeline" as PanelType,
+    icon: GitBranch,
+    label: "Pipeline",
+    color: "#58a6ff",
+  },
+  {
+    id: "monitor" as PanelType,
+    icon: Activity,
+    label: "Monitor",
+    color: "#3fb950",
+  },
+  {
+    id: "history" as PanelType,
+    icon: History,
+    label: "History",
+    color: "#d29922",
+  },
+  {
+    id: "diagnostics" as PanelType,
+    icon: Stethoscope,
+    label: "Diagnostics",
+    color: "#f85149",
+  },
+  {
+    id: "logs" as PanelType,
+    icon: FileText,
+    label: "Log Translator",
+    color: "#8b949e",
+  },
+  {
+    id: "settings" as PanelType,
+    icon: Settings,
+    label: "Settings",
+    color: "#6e7681",
+  },
+];
 
 export const Dashboard: React.FC = () => {
-  const [activePanel, setActivePanel] = useState<PanelType>("chat");
-  const [isConsoleActive, setIsConsoleActive] = useState(false);
+  const [activePanel, setActivePanel] = useState<PanelType>("pipeline");
+  const { rateLimit, nudges, activeRepo, config } = useCIPipeline();
 
-  const navItems = [
-    {
-      id: "chat",
-      icon: MessageCircle,
-      label: "AI Assistant",
-      color: "from-green-400 to-emerald-500",
-    },
-    {
-      id: "console",
-      icon: Terminal,
-      label: "Agent Console",
-      color: "from-green-500 to-teal-500",
-    },
-    {
-      id: "projects",
-      icon: FolderOpen,
-      label: "Projects",
-      color: "from-emerald-400 to-green-500",
-    },
-    {
-      id: "monitoring",
-      icon: Monitor,
-      label: "Repo Monitor",
-      color: "from-blue-400 to-cyan-500",
-    },
-    {
-      id: "analytics",
-      icon: BarChart3,
-      label: "Analytics",
-      color: "from-teal-400 to-green-400",
-    },
-    {
-      id: "settings",
-      icon: Settings,
-      label: "Settings",
-      color: "from-green-600 to-emerald-600",
-    },
-    {
-      id: "profile",
-      icon: User,
-      label: "Profile",
-      color: "from-emerald-500 to-green-500",
-    },
-  ];
-
-  const handleRunAgent = () => {
-    setIsConsoleActive(true);
-    setActivePanel("console");
-  };
-
-  const handleProfileClick = () => {
-    setActivePanel("profile");
-  };
-
-  const handleRepoStatusClick = () => {
-    setActivePanel("monitoring");
-  };
+  const lowQuota = rateLimit && rateLimit.remaining < 100;
 
   return (
-    <div className="min-h-screen bg-theme-primary text-theme-primary relative overflow-hidden">
-      {/* 3D Background */}
-      <div className="absolute inset-0 opacity-20">
-        <div className="absolute inset-0 bg-gradient-to-br from-accent-theme/20 via-transparent to-accent-theme/20" />
+    <div
+      className="min-h-screen flex flex-col relative overflow-hidden"
+      style={{ background: "#0d1117", color: "#e6edf3" }}
+    >
+      {/* Nudge system floats above everything */}
+      <NudgeSystem />
+
+      {/* Top bar */}
+      <div
+        className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+        style={{ borderBottom: "1px solid #21262d", background: "#161b22" }}
+      >
+        <div className="flex items-center gap-2">
+          <div
+            className="w-7 h-7 rounded-md flex items-center justify-center"
+            style={{ background: "#3fb950" }}
+          >
+            <span className="font-mono font-bold text-xs" style={{ color: "#0d1117" }}>
+              GP
+            </span>
+          </div>
+          <span className="font-semibold text-sm" style={{ color: "#e6edf3" }}>
+            GitPro
+          </span>
+          {activeRepo && (
+            <span
+              className="font-mono text-xs px-2 py-0.5 rounded"
+              style={{
+                background: "#21262d",
+                color: "#3fb950",
+                border: "1px solid #30363d",
+              }}
+            >
+              {activeRepo.fullName}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3">
+          {nudges.length > 0 && (
+            <span
+              className="font-mono text-xs px-1.5 py-0.5 rounded"
+              style={{ background: "#f8514920", color: "#f85149", border: "1px solid #f8514930" }}
+            >
+              {nudges.length} nudge{nudges.length > 1 ? "s" : ""}
+            </span>
+          )}
+          {lowQuota && (
+            <span
+              className="font-mono text-xs px-2 py-0.5 rounded"
+              style={{ background: "#d2992220", color: "#d29922", border: "1px solid #d2992230" }}
+            >
+              ⚠ API: {rateLimit!.remaining} left
+            </span>
+          )}
+          {!config.githubToken && (
+            <span
+              className="font-mono text-xs px-2 py-0.5 rounded cursor-pointer"
+              style={{ background: "#f8514920", color: "#f85149", border: "1px solid #f8514930" }}
+              onClick={() => setActivePanel("settings")}
+            >
+              No token — add in Settings
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Header */}
-      <Header onRunAgent={handleRunAgent} onProfileClick={handleProfileClick} />
-
-      <div className="flex h-[calc(100vh-80px)] relative z-10">
-        {/* Sidebar Navigation */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
         <motion.nav
-          initial={{ opacity: 0, x: -20 }}
+          initial={{ opacity: 0, x: -16 }}
           animate={{ opacity: 1, x: 0 }}
-          className="w-64 bg-theme-secondary border-r border-theme p-4"
+          className="flex flex-col gap-1 p-3 flex-shrink-0"
+          style={{
+            width: 180,
+            background: "#161b22",
+            borderRight: "1px solid #21262d",
+          }}
         >
-          <div className="space-y-2">
-            {navItems.map((item) => (
+          {NAV_ITEMS.map((item) => {
+            const active = activePanel === item.id;
+            return (
               <motion.button
                 key={item.id}
-                whileHover={{ scale: 1.02, x: 4 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setActivePanel(item.id as PanelType)}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all duration-300 ${
-                  activePanel === item.id
-                    ? `bg-gradient-to-r ${item.color} text-theme-primary font-medium shadow-lg`
-                    : "hover:bg-theme-secondary text-theme-secondary hover:text-theme-primary"
-                }`}
+                whileHover={{ x: 2 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => setActivePanel(item.id)}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-left text-sm transition-colors"
+                style={{
+                  background: active ? `${item.color}18` : "transparent",
+                  color: active ? item.color : "#8b949e",
+                  border: active
+                    ? `1px solid ${item.color}30`
+                    : "1px solid transparent",
+                  fontWeight: active ? 500 : 400,
+                }}
               >
-                <item.icon className="w-5 h-5" />
-                <span>{item.label}</span>
+                <item.icon size={15} />
+                {item.label}
               </motion.button>
-            ))}
-          </div>
-
-          {/* Quick Actions */}
-          <div className="mt-8 space-y-3">
-            <h3 className="text-sm font-medium text-gray-400 mb-3">
-              Quick Actions
-            </h3>
-
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleRepoStatusClick}
-              className="w-full flex items-center gap-3 p-3 rounded-xl bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 hover:text-white transition-all duration-300"
-            >
-              <Activity className="w-4 h-4" />
-              <span className="text-sm">Repo Status</span>
-            </motion.button>
-          </div>
+            );
+          })}
         </motion.nav>
 
-        {/* Main Content */}
-        <div className="flex-1 relative">
+        {/* Main content */}
+        <div className="flex-1 overflow-hidden relative">
           <AnimatePresence mode="wait">
             <motion.div
               key={activePanel}
-              initial={{ opacity: 0, x: 20 }}
+              initial={{ opacity: 0, x: 12 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.3 }}
+              exit={{ opacity: 0, x: -12 }}
+              transition={{ duration: 0.2 }}
               className="h-full"
             >
-              {activePanel === "chat" && <ChatInterface />}
-              {activePanel === "console" && (
-                <CommandConsole isActive={isConsoleActive} />
-              )}
-              {activePanel === "projects" && <ProjectView />}
-              {activePanel === "analytics" && <AnalyticsPanel />}
+              {activePanel === "pipeline" && <WorkflowVisualization />}
+              {activePanel === "monitor" && <PipelineMonitor />}
+              {activePanel === "history" && <PipelineHistory />}
+              {activePanel === "diagnostics" && <DiagnosticsPanel />}
+              {activePanel === "logs" && <LogTranslator />}
               {activePanel === "settings" && <SettingsPanel />}
-              {activePanel === "profile" && <UserProfile />}
-              {activePanel === "monitoring" && <RepoMonitoring />}
             </motion.div>
           </AnimatePresence>
         </div>
