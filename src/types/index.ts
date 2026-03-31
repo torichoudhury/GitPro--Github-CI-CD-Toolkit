@@ -62,7 +62,7 @@ export type StageStatus = "pending" | "in_progress" | "success" | "failure";
 export interface PipelineStage {
   id: string;
   label: string;
-  icon: string;
+  icon: any;
   status: StageStatus;
   job?: WorkflowJob;
 }

@@ -12,7 +12,6 @@ import {
   getWorkflowJobs,
   checkRateLimit,
   setToken,
-  getRepoInfo,
   getBranchDivergence,
   getConflictRiskFiles,
   getStaleBranches,
@@ -39,7 +38,9 @@ import type {
 const DEFAULT_CONFIG: AppConfig = {
   githubToken: import.meta.env.VITE_GITHUB_TOKEN ?? "",
   githubUsername: import.meta.env.VITE_GITHUB_USERNAME ?? "",
-  connectedRepos: [],
+  connectedRepos: import.meta.env.VITE_GITHUB_REPO
+    ? [{ fullName: import.meta.env.VITE_GITHUB_REPO, defaultBranch: "master" }]
+    : [],
   pollingInterval: 30 as PollingInterval,
   nudgeToggles: {
     push: true,
@@ -125,9 +126,10 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
   const [config, _setConfig] = useState<AppConfig>(loadConfig);
-  const [activeRepo, setActiveRepo] = useState<ConnectedRepo | null>(
-    () => loadConfig().connectedRepos[0] ?? null
-  );
+  const [activeRepo, setActiveRepo] = useState<ConnectedRepo | null>(() => {
+    const cfg = loadConfig();
+    return cfg.connectedRepos[0] ?? null;
+  });
 
   const [pipelineRuns, setPipelineRuns] = useState<WorkflowRun[]>([]);
   const [currentRun, setCurrentRun] = useState<WorkflowRun | null>(null);
@@ -211,27 +213,28 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
     try {
       const base = activeRepo.defaultBranch;
 
-      // We use the default branch as both base and head for the divergence demo
-      // when we don't know the current working branch. Users can see base→base = 0/0.
       let divergence = null;
+      let conflictFiles: any[] = [];
+      let staleBranches: any[] = [];
+
       try {
+        const fetchTarget = currentRun?.head_branch ?? base;
         divergence = await getBranchDivergence(
           activeRepo.fullName,
           base,
-          base
+          fetchTarget
         );
       } catch { /* ignore */ }
 
-      let conflictFiles = [];
       try {
+        const fetchTarget = currentRun?.head_branch ?? base;
         conflictFiles = await getConflictRiskFiles(
           activeRepo.fullName,
           base,
-          base
+          fetchTarget
         );
       } catch { /* ignore */ }
 
-      let staleBranches = [];
       try {
         staleBranches = await getStaleBranches(activeRepo.fullName, 7);
       } catch { /* ignore */ }
@@ -275,7 +278,7 @@ export const CIPipelineProvider: React.FC<{ children: ReactNode }> = ({
     const intervalMs = config.pollingInterval * 1000;
 
     pollTimerRef.current = setInterval(fetchRuns, intervalMs);
-    diagTimerRef.current = setInterval(fetchDiagnostics, 5 * 60 * 1000);
+    diagTimerRef.current = setInterval(fetchDiagnostics, 30 * 1000); // Poll diagnostics every 30s instead of 5m
 
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);

@@ -12,23 +12,40 @@ interface ErrorPattern {
 }
 
 const PATTERNS: ErrorPattern[] = [
+  // Dependency & Module Issues
   { pattern: /Cannot find module/i, category: "dependency_error" },
-  { pattern: /ENOENT/i, category: "dependency_error" },
-  { pattern: /npm ERR!/i, category: "dependency_error" },
+  { pattern: /ENOENT.*node_modules/i, category: "dependency_error" },
+  { pattern: /npm ERR!.*code ERESOLVE/i, category: "dependency_error" },
   { pattern: /ModuleNotFoundError/i, category: "dependency_error" },
+  { pattern: /Package subpath .* is not defined/i, category: "dependency_error" },
+  
+  // Environment & Permission Issues
   { pattern: /permission denied/i, category: "env_missing" },
   { pattern: /EACCES/i, category: "env_missing" },
-  {
-    pattern: /The `.+` environment variable is (missing|required)/i,
-    category: "env_missing",
-  },
+  { pattern: /The `.+` environment variable is (missing|required)/i, category: "env_missing" },
+  { pattern: /API_KEY|TOKEN.*(not set|undefined)/i, category: "env_missing" },
+  { pattern: /Secret .* not found/i, category: "env_missing" },
+  
+  // Test Failures
   { pattern: /undefined is not/i, category: "test_failure" },
   { pattern: /AssertionError/i, category: "test_failure" },
   { pattern: /FAILED.*test/i, category: "test_failure" },
   { pattern: /\d+ (test|spec).*(fail|err)/i, category: "test_failure" },
+  { pattern: /expected.*to (equal|be)/i, category: "test_failure" },
+  
+  // Linting & Code Quality
   { pattern: /Lint(ing)? error/i, category: "lint_error" },
   { pattern: /ESLint/i, category: "lint_error" },
   { pattern: /Parsing error/i, category: "lint_error" },
+  { pattern: /husky - pre-commit hook exit with code/i, category: "lint_error" },
+  { pattern: /Prettier/i, category: "lint_error" },
+  
+  // Vite & Modern Tooling
+  { pattern: /Vite Error/i, category: "unknown" },
+  { pattern: /Failed to resolve import/i, category: "dependency_error" },
+  { pattern: /Internal server error.*(vite|postcss)/i, category: "unknown" },
+  
+  // Generic Fallbacks
   { pattern: /exit code [1-9]/i, category: "unknown" },
   { pattern: /Error:/i, category: "unknown" },
   { pattern: /FAILED/i, category: "unknown" },
@@ -36,15 +53,15 @@ const PATTERNS: ErrorPattern[] = [
 
 const FIX_SUGGESTIONS: Record<FailureCategory, string> = {
   dependency_error:
-    "A dependency is missing. Run `npm install` (Node) or `pip install -r requirements.txt` (Python) locally and make sure lock files are committed.",
+    "A dependency or sub-package is unresolved. Ensure your lock files (package-lock.json/yarn.lock) are synchronized by running `npm install` locally and committing the changes. Check for conflicting peer dependencies.",
   test_failure:
-    "One or more tests failed. Run the test suite locally (`npm test`) to see which assertion is failing and fix the code or update the snapshot.",
+    "Runtime logic or assertion mismatch detected. Execute the test suite locally using `npm test` or `jest` to isolate the failing spec. Review recent changes for regressions in business logic.",
   lint_error:
-    "A linting rule was violated. Run `npm run lint` locally to see all issues. Use `--fix` flag for auto-fixable rules.",
+    "Static analysis or pre-commit hook violation. Run `npm run lint` or `npx eslint --fix .` to resolve style issues. Ensure all files adhere to the project's formatting standards defined in .eslintrc or .prettierrc.",
   env_missing:
-    "A required environment variable or secret is missing from your repo / CI environment. Add it under Settings → Secrets & Variables → Actions.",
+    "A required environment variable, GitHub Secret, or vault credential is inaccessible. Verify that the necessary secrets are defined in GitHub Settings (Secrets & Variables -> Actions) and that the workflow can access them.",
   unknown:
-    "Review the highlighted line and the lines immediately above it for context. Search the error message online for more details.",
+    "Non-deterministic execution failure. Analyze the surrounding log lines for memory exhaustion (OOM), network timeouts, or intermittent infrastructure issues. Cross-reference the error code with the platform documentation.",
 };
 
 export function analyzeLog(rawLog: string): LogAnalysisResult {

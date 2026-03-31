@@ -46,7 +46,7 @@ function Toggle({
 }
 
 export const ConfigManager: React.FC = () => {
-  const { config, setConfig, setActiveRepo } = useCIPipeline();
+  const { config, setConfig, activeRepo, setActiveRepo } = useCIPipeline();
 
   // Token section
   const [tokenInput, setTokenInput] = useState(config.githubToken);
@@ -211,26 +211,58 @@ export const ConfigManager: React.FC = () => {
         )}
 
         <div className="space-y-2">
-          {config.connectedRepos.map((repo) => (
-            <div
-              key={repo.fullName}
-              className="flex items-center justify-between px-3 py-2 rounded"
-              style={{ background: "#0d1117", border: "1px solid #21262d" }}
-            >
-              <div>
-                <p className="font-mono text-xs" style={{ color: "#e6edf3" }}>{repo.fullName}</p>
-                <p className="text-xs" style={{ color: "#6e7681" }}>default: {repo.defaultBranch}</p>
-              </div>
-              <button
-                onClick={() => handleRemoveRepo(repo.fullName)}
-                className="text-gray-600 hover:text-red-400"
+          {config.connectedRepos.map((repo) => {
+            const isActive = activeRepo?.fullName === repo.fullName;
+            return (
+              <div
+                key={repo.fullName}
+                className="flex items-center justify-between px-3 py-3 rounded"
+                style={{
+                  background: isActive ? "#1f6feb20" : "#0d1117",
+                  border: isActive ? "1px solid #1f6feb50" : "1px solid #21262d",
+                }}
               >
-                <Trash2 size={13} />
-              </button>
-            </div>
-          ))}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-mono text-sm font-semibold" style={{ color: isActive ? "#58a6ff" : "#e6edf3" }}>
+                      {repo.fullName}
+                    </p>
+                    {isActive && (
+                      <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">
+                        ACTIVE
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs mt-0.5" style={{ color: "#6e7681" }}>
+                    default stream: {repo.defaultBranch}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!isActive && (
+                    <button
+                      onClick={() => setActiveRepo(repo)}
+                      className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-colors"
+                      style={{ background: "#21262d", color: "#8b949e" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = "#8b949e")}
+                    >
+                      Use Demo
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleRemoveRepo(repo.fullName)}
+                    className="p-1.5 rounded text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
           {config.connectedRepos.length === 0 && (
-            <p className="text-xs" style={{ color: "#6e7681" }}>No repos yet. Add one above.</p>
+            <div className="py-6 text-center border border-dashed border-white/10 rounded-lg">
+              <p className="text-xs font-mono text-tertiary">No repos configured.</p>
+            </div>
           )}
         </div>
       </motion.div>

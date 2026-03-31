@@ -1,6 +1,17 @@
 import React from "react";
 import { motion } from "framer-motion";
-import { RefreshCw, Loader2, ExternalLink, GitBranch, Clock, Hash, Zap, TrendingUp } from "lucide-react";
+import { 
+  RefreshCw, 
+  Loader2, 
+  ExternalLink, 
+  GitBranch, 
+  Clock, 
+  Hash, 
+  Zap, 
+  TrendingUp, 
+  AlertCircle, 
+  Activity 
+} from "lucide-react";
 import { useCIPipeline } from "../contexts/CIPipelineContext";
 
 function fmtDuration(seconds?: number) {
@@ -35,8 +46,12 @@ export const PipelineMonitor: React.FC = () => {
 
   if (!activeRepo) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <p className="text-sm" style={{ color: "#8b949e" }}>Select a repository in Settings to begin monitoring.</p>
+      <div className="h-full flex flex-col items-center justify-center p-10 text-center">
+        <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-6 border border-white/10">
+          <GitBranch size={32} className="text-tertiary" />
+        </div>
+        <h3 className="text-xl font-bold text-white mb-2">No Repository Connected</h3>
+        <p className="text-secondary max-w-sm">Select a repository in Settings to begin monitoring your CI/CD pipelines.</p>
       </div>
     );
   }
@@ -44,7 +59,7 @@ export const PipelineMonitor: React.FC = () => {
   // Compute success rate from last 10 runs
   const last10 = pipelineRuns.slice(0, 10);
   const successes = last10.filter((r) => r.conclusion === "success").length;
-  const successRate = last10.length > 0 ? Math.round((successes / last10.length) * 100) : null;
+  const successRate = last10.length > 0 ? Math.round((successes / last10.length) * 100) : 0;
 
   // Pipeline completion %
   let completionPct = 0;
@@ -60,7 +75,7 @@ export const PipelineMonitor: React.FC = () => {
       label: "Run ID",
       value: currentRun ? `#${currentRun.run_number}` : "—",
       icon: Hash,
-      color: "#58a6ff",
+      color: "#60a5fa",
     },
     {
       label: "Trigger",
@@ -68,19 +83,19 @@ export const PipelineMonitor: React.FC = () => {
         ? `${currentRun.event} (${currentRun.head_branch})`
         : "—",
       icon: GitBranch,
-      color: "#3fb950",
+      color: "#4ade80",
     },
     {
       label: "Duration",
       value: fmtDuration(currentRun?.durationSeconds),
       icon: Clock,
-      color: "#d29922",
+      color: "#fbbf24",
     },
     {
       label: "Success Rate",
-      value: successRate != null ? `${successRate}%` : "—",
+      value: `${successRate}%`,
       icon: TrendingUp,
-      color: successRate != null && successRate >= 70 ? "#3fb950" : successRate != null && successRate >= 40 ? "#d29922" : "#f85149",
+      color: successRate >= 70 ? "#4ade80" : successRate >= 40 ? "#fbbf24" : "#f87171",
     },
   ];
 
@@ -88,142 +103,216 @@ export const PipelineMonitor: React.FC = () => {
     ? "in progress"
     : currentRun?.conclusion ?? "—";
 
-  const statusColor = currentRun?.conclusion === "success"
-    ? "#3fb950"
-    : currentRun?.conclusion === "failure"
-    ? "#f85149"
-    : currentRun?.status === "in_progress"
-    ? "#58a6ff"
-    : "#8b949e";
-
   return (
-    <div className="h-full flex flex-col p-6 overflow-y-auto" style={{ background: "#0d1117" }}>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div className="h-full flex flex-col gap-8 fade-in">
+      {/* Header Section */}
+      <div className="flex items-end justify-between">
         <div>
-          <h2 className="text-lg font-semibold" style={{ color: "#e6edf3" }}>Pipeline Monitor</h2>
-          <p className="text-xs mt-0.5" style={{ color: "#8b949e" }}>{activeRepo.fullName}</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Live Monitor</h2>
+          <div className="flex items-center gap-2 group cursor-default">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-sm shadow-green-500/50" />
+            <p className="text-sm font-medium text-secondary group-hover:text-white transition-colors">{activeRepo.fullName}</p>
+          </div>
         </div>
+        
         <div className="flex items-center gap-3">
-          {rateLimit && rateLimit.remaining < 100 && (
-            <span className="badge badge-failure font-mono text-xs">
-              ⚠ API quota: {rateLimit.remaining} left
-            </span>
-          )}
           <button
             onClick={refreshRuns}
             disabled={isLoadingRuns}
-            className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono"
-            style={{ background: "#161b22", border: "1px solid #30363d", color: "#8b949e" }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-semibold text-secondary hover:text-white hover:bg-white/10 transition-all disabled:opacity-50"
           >
             {isLoadingRuns ? (
-              <Loader2 size={12} className="spin" />
+              <Loader2 size={14} className="spin" />
             ) : (
-              <RefreshCw size={12} />
+              <RefreshCw size={14} />
             )}
-            Refresh
+            Sync Live Data
           </button>
         </div>
       </div>
 
       {runsError && (
-        <div className="mb-4 px-3 py-2 rounded text-xs font-mono" style={{ background: "rgba(248,81,73,0.1)", color: "#f85149", border: "1px solid rgba(248,81,73,0.3)" }}>
-          {runsError}
+        <div className="p-4 rounded-2xl bg-red-400/10 border border-red-400/20 text-red-100 flex items-center gap-3 shadow-lg shadow-red-500/5">
+          <AlertCircle size={18} className="text-red-400" />
+          <span className="text-sm font-medium">{runsError}</span>
         </div>
       )}
 
-      {/* Metrics grid */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      {/* Metrics High-End Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {metrics.map((m, i) => (
           <motion.div
             key={m.label}
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08 }}
-            className="card p-4"
+            transition={{ delay: i * 0.1, type: "spring", stiffness: 100 }}
+            className="card group relative overflow-hidden"
           >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs" style={{ color: "#8b949e" }}>{m.label}</span>
-              <m.icon size={14} style={{ color: m.color }} />
+            <div className={`absolute top-0 right-0 w-24 h-24 blur-[60px] opacity-20 pointer-events-none transition-opacity group-hover:opacity-40`} style={{ background: m.color }} />
+            
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center transition-transform group-hover:scale-110" style={{ color: m.color }}>
+                <m.icon size={18} />
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">{m.label}</span>
             </div>
-            <p className="font-mono text-lg font-semibold" style={{ color: m.color }}>
-              {m.value}
-            </p>
+            
+            <div>
+              <p className="text-2xl font-bold tracking-tight text-white mb-1">
+                {m.value}
+              </p>
+              <div className="flex items-center gap-1.5">
+                <div className="w-1 h-1 rounded-full bg-tertiary" />
+                <span className="text-[10px] font-mono text-tertiary">CURRENT SESSION</span>
+              </div>
+            </div>
           </motion.div>
         ))}
       </div>
 
-      {/* Progress bar */}
-      <div className="card p-4 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium" style={{ color: "#e6edf3" }}>Pipeline Progress</span>
-          <div className="flex items-center gap-2">
-            <span
-              className="font-mono text-xs px-2 py-0.5 rounded"
-              style={{ background: `${statusColor}20`, color: statusColor, border: `1px solid ${statusColor}30` }}
-            >
-              {statusLabel}
-            </span>
-            <span className="font-mono text-xs" style={{ color: "#8b949e" }}>
-              {completionPct}%
-            </span>
+      {/* Progress & Detailed Status */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        <div className="xl:col-span-2 space-y-8">
+          {/* Main Progress Card */}
+          <div className="card border-blue-500/20 bg-blue-500/5">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-500/20 flex items-center justify-center text-blue-400">
+                  <Activity size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white leading-none">Execution Velocity</h3>
+                  <p className="text-xs text-secondary mt-1">Real-time pipeline progression</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-3xl font-black text-white">{completionPct}%</span>
+                <p className="text-[10px] font-bold text-blue-400 mt-1 uppercase tracking-tighter">{statusLabel}</p>
+              </div>
+            </div>
+
+            <div className="progress-bar-track h-3 bg-white/5 mb-6">
+              <motion.div
+                className="progress-bar-fill h-full bg-gradient-to-r from-blue-500 via-purple-500 to-blue-400"
+                initial={{ width: "0%" }}
+                animate={{ width: `${completionPct}%` }}
+                transition={{ duration: 1.2, ease: "circOut" }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 rounded-xl bg-black/20 border border-white/5">
+              <div className="flex items-center gap-4">
+                <div className="flex -space-x-2">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="w-6 h-6 rounded-full border-2 border-primary bg-gray-700 shadow-sm shadow-black" />
+                  ))}
+                </div>
+                <span className="text-xs font-semibold text-secondary">
+                  {currentJobs.filter((j) => j.status === "completed").length} / {currentJobs.length} Jobs Finalized
+                </span>
+              </div>
+              {currentRun && (
+                <div className="flex items-center gap-2 text-tertiary">
+                  <Clock size={12} />
+                  <span className="text-[10px] font-bold font-mono tracking-tighter uppercase">{relativeTime(currentRun.created_at)}</span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="progress-bar-track">
-          <motion.div
-            className="progress-bar-fill"
-            initial={{ width: "0%" }}
-            animate={{ width: `${completionPct}%` }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
-          />
-        </div>
-        <div className="flex items-center justify-between mt-2">
-          <span className="font-mono text-xs" style={{ color: "#6e7681" }}>
-            {currentJobs.filter((j) => j.status === "completed").length} / {currentJobs.length} jobs
-          </span>
-          {currentRun && (
-            <span className="font-mono text-xs" style={{ color: "#6e7681" }}>
-              {relativeTime(currentRun.created_at)}
-            </span>
+
+          {/* Jobs List - Deep Glass View */}
+          {currentJobs.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-2">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-tertiary">Step-by-Step Breakdown</h3>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-bold text-secondary">FILTER</span>
+                  <div className="w-px h-3 bg-white/10" />
+                  <Zap size={12} className="text-yellow-400" />
+                </div>
+              </div>
+              
+              <div className="grid gap-3">
+                {currentJobs.map((job) => {
+                  const isSuccess = job.conclusion === "success";
+                  const isFailure = job.conclusion === "failure";
+                  const isRunning = job.status === "in_progress";
+                  
+                  return (
+                    <motion.div
+                      key={job.id}
+                      whileHover={{ scale: 1.01, backgroundColor: "rgba(255,255,255,0.03)" }}
+                      className="group flex items-center justify-between p-5 rounded-2xl border border-white/5 bg-white/[0.01] transition-all"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={`w-2.5 h-2.5 rounded-full ${isRunning ? 'bg-blue-400 animate-pulse shadow-blue-400/50 shadow-sm' : isSuccess ? 'bg-green-500' : isFailure ? 'bg-red-500' : 'bg-gray-600'}`} />
+                        <div>
+                          <p className="text-sm font-bold text-white group-hover:text-blue-400 transition-colors uppercase tracking-tight">{job.name}</p>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-[10px] font-bold font-mono text-tertiary tracking-tighter uppercase">ID: {job.id.toString().slice(-6)}</span>
+                            <div className="w-1 h-1 rounded-full bg-tertiary/30" />
+                            <span className="text-[10px] font-bold font-mono text-secondary tracking-tighter uppercase">{job.status}</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-6">
+                        {job.durationSeconds != null && (
+                          <div className="hidden sm:block text-right">
+                            <p className="text-xs font-bold font-mono text-white leading-none">{fmtDuration(job.durationSeconds)}</p>
+                            <p className="text-[9px] font-black text-tertiary mt-1 uppercase">EST. TIME</p>
+                          </div>
+                        )}
+                        <div className="w-px h-8 bg-white/5" />
+                        <a 
+                          href={job.html_url} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/5 border border-white/10 text-tertiary hover:text-white hover:bg-blue-500 transition-all shadow-xl"
+                        >
+                          <ExternalLink size={16} />
+                        </a>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
-      </div>
 
-      {/* Jobs list */}
-      {currentJobs.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: "#e6edf3" }}>
-            <Zap size={14} style={{ color: "#58a6ff" }} />
-            Current Jobs
-          </h3>
-          <div className="space-y-2">
-            {currentJobs.map((job) => {
-              const c = job.conclusion === "success" ? "#3fb950"
-                : job.conclusion === "failure" ? "#f85149"
-                : job.status === "in_progress" ? "#58a6ff"
-                : "#6e7681";
-              return (
-                <div key={job.id} className="flex items-center justify-between py-1.5" style={{ borderBottom: "1px solid #21262d" }}>
-                  <span className="font-mono text-xs" style={{ color: "#e6edf3" }}>{job.name}</span>
-                  <div className="flex items-center gap-3">
-                    {job.durationSeconds != null && (
-                      <span className="font-mono text-xs" style={{ color: "#6e7681" }}>
-                        {fmtDuration(job.durationSeconds)}
-                      </span>
-                    )}
-                    <span className="font-mono text-xs" style={{ color: c }}>
-                      {job.status === "in_progress" ? "running" : job.conclusion ?? "pending"}
-                    </span>
-                    <a href={job.html_url} target="_blank" rel="noreferrer">
-                      <ExternalLink size={11} style={{ color: "#6e7681" }} />
-                    </a>
+        {/* Sidebar Info/Stats */}
+        <div className="space-y-6">
+          <div className="card border-purple-500/20 bg-purple-500/5">
+            <h4 className="text-xs font-black text-purple-400 uppercase tracking-widest mb-4">Session Intelligence</h4>
+            <div className="space-y-5">
+              <div className="flex justify-between items-center group">
+                <span className="text-xs text-secondary group-hover:text-white transition-colors">Success Rate</span>
+                <span className="text-sm font-black font-mono text-white">{successRate}%</span>
+              </div>
+              <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${successRate}%` }}
+                  className="h-full bg-purple-500 shadow-sm shadow-purple-500/50"
+                  transition={{ duration: 1, delay: 0.5 }}
+                />
+              </div>
+              {rateLimit && (
+                <div className="pt-4 border-t border-white/5">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs text-secondary font-medium">API Threshold</span>
+                    <span className="text-xs font-bold text-white">{Math.round((rateLimit.remaining / rateLimit.limit) * 100)}%</span>
                   </div>
+                  <p className="text-[10px] text-tertiary leading-relaxed font-medium">
+                    System stability is prioritized. API calls are optimized to stay within safe range and reduce latency.
+                  </p>
                 </div>
-              );
-            })}
+              )}
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
