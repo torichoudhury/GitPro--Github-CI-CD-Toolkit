@@ -136,10 +136,4 @@ Contributions are welcome! Whether it's fixing a bug, adding a feature, or impro
 
 ---
 
-## 📄 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
-
-<p align="center" style="margin-top: 40px;">
-  Made with ✨ and ☕ by the GitPro Team.
-</p>
