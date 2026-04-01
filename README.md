@@ -2,7 +2,6 @@
 
 <p align="center">
   <strong>The Ultimate GitHub-Native CI/CD Toolkit</strong><br>
-  <em>AI-driven insights, stunning visualizations, and real-time pipeline monitoring in one premium experience.</em>
 </p>
 
 <p align="center">
